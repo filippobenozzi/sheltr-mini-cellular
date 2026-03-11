@@ -299,6 +299,7 @@
           <p class="small">Comandi MQTT realtime sui canali di tipo luce.</p>
           <div class="actions">
             <button id="refreshLightsBtn" type="button">Aggiorna luci</button>
+            <button id="allLightsOnBtn" class="primary" type="button">Accendi tutte</button>
             <button id="allLightsOffBtn" class="secondary" type="button">Spegni tutte</button>
           </div>
           <div id="lightsGrid" class="lights-grid"></div>
@@ -349,6 +350,7 @@
       boards: document.getElementById("boards"),
       lightsGrid: document.getElementById("lightsGrid"),
       refreshLightsBtn: document.getElementById("refreshLightsBtn"),
+      allLightsOnBtn: document.getElementById("allLightsOnBtn"),
       allLightsOffBtn: document.getElementById("allLightsOffBtn"),
       saveBtn: document.getElementById("saveBtn"),
       publishBtn: document.getElementById("publishBtn"),
@@ -878,6 +880,21 @@
       }
     }
 
+    async function lightsAllOn() {
+      if (!state.current) return;
+      try {
+        const topic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+          method: "POST",
+          body: JSON.stringify({ action: "on", all: true, topic })
+        });
+        const count = Array.isArray(res.sent) ? res.sent.length : 0;
+        note(`Comando ON inviato a ${count} luci su topic '${res.topic}'.`);
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
     async function refreshLightsWithFeedback() {
       if (!state.current) return;
       renderLights();
@@ -921,6 +938,7 @@
     el.createForm.addEventListener("submit", createInstance);
     el.addBoard.addEventListener("click", addBoard);
     el.refreshLightsBtn.addEventListener("click", refreshLightsWithFeedback);
+    el.allLightsOnBtn.addEventListener("click", lightsAllOn);
     el.allLightsOffBtn.addEventListener("click", lightsAllOff);
     el.saveBtn.addEventListener("click", saveCurrentWithFeedback);
     el.publishBtn.addEventListener("click", publishCurrent);
