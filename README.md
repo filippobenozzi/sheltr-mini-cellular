@@ -44,6 +44,7 @@ MQTT_PASSWORD=filippo1994
 6. Premi `Pubblica su MQTT` per inviare la configurazione.
 7. Usa `Controllo Luci` per inviare comandi realtime ai canali luce.
 8. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
+9. La UI mostra lo stato ON/OFF ultimo comando inviato per ogni luce.
 
 Topic di default per la configurazione:
 

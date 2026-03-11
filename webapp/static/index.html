@@ -198,6 +198,13 @@
       font-size: 12px;
       color: var(--muted);
     }
+    .light-state {
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .light-state.on { color: #0f6a63; }
+    .light-state.off { color: #a63535; }
+    .light-state.unknown { color: var(--muted); }
     .light-actions {
       display: flex;
       gap: 6px;
@@ -339,7 +346,8 @@
       current: null,
       currentId: null,
       mqttBaseTopic: "dr154",
-      lights: []
+      lights: [],
+      lightRuntimeById: {}
     };
 
     const el = {
@@ -430,6 +438,17 @@
 
       out.sort((a, b) => `${a.room} ${a.name}`.localeCompare(`${b.room} ${b.name}`, "it", { sensitivity: "base" }));
       return out;
+    }
+
+    function lightRuntime(lightId) {
+      return state.lightRuntimeById[lightId] || null;
+    }
+
+    function setLightRuntime(lightId, isOn) {
+      state.lightRuntimeById[lightId] = {
+        isOn: typeof isOn === "boolean" ? isOn : null,
+        updatedAt: new Date().toISOString()
+      };
     }
 
     function normalizeBoard(raw, index) {
@@ -530,6 +549,7 @@
         el.boards.innerHTML = "";
         el.lightsGrid.innerHTML = "";
         state.lights = [];
+        state.lightRuntimeById = {};
         return;
       }
 
@@ -557,6 +577,7 @@
         : "frame_hex_space_crlf";
       el.boardsCount.value = String(state.current.boards.length);
       renderBoards();
+      refreshLightsFromServer(true).catch(() => {});
     }
 
     function createLabeledInput(labelText, type = "text", value = "", onChange = null) {
@@ -747,6 +768,13 @@
         meta.textContent = `${light.room} • ${light.id} • addr ${light.address}`;
         card.appendChild(meta);
 
+        const runtime = lightRuntime(light.id);
+        const status = document.createElement("div");
+        const isOn = runtime && typeof runtime.isOn === "boolean" ? runtime.isOn : null;
+        status.className = `light-state ${isOn === null ? "unknown" : (isOn ? "on" : "off")}`;
+        status.textContent = isOn === null ? "Stato: sconosciuto" : `Stato: ${isOn ? "ON" : "OFF"}`;
+        card.appendChild(status);
+
         const actions = document.createElement("div");
         actions.className = "light-actions";
         for (const action of ["on", "off", "toggle"]) {
@@ -759,6 +787,29 @@
         card.appendChild(actions);
 
         el.lightsGrid.appendChild(card);
+      }
+    }
+
+    async function refreshLightsFromServer(silent = false) {
+      if (!state.current) return;
+      try {
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights`);
+        const byId = {};
+        for (const light of Array.isArray(res.lights) ? res.lights : []) {
+          byId[light.id] = {
+            isOn: typeof light.isOn === "boolean" ? light.isOn : null,
+            updatedAt: light.stateUpdatedAt || null
+          };
+        }
+        state.lightRuntimeById = byId;
+        renderLights();
+        if (!silent) {
+          note(`Stato luci aggiornato (${Object.keys(byId).length} canali).`);
+        }
+      } catch (error) {
+        if (!silent) {
+          note(error.message, true);
+        }
       }
     }
 
@@ -885,6 +936,11 @@
           method: "POST",
           body: JSON.stringify(payload)
         });
+        const sentFirst = Array.isArray(res.sent) && res.sent[0] ? res.sent[0] : null;
+        if (sentFirst && typeof sentFirst.isOn === "boolean") {
+          setLightRuntime(light.id, sentFirst.isOn);
+          renderLights();
+        }
         const frameHex = Array.isArray(res.sent) && res.sent[0] ? res.sent[0].frameHex : "";
         note(`Comando '${action}' inviato a ${light.name} su topic '${res.topic}'.${frameHex ? ` Frame: ${frameHex}` : ""}`);
       } catch (error) {
@@ -906,6 +962,12 @@
           })
         });
         const count = Array.isArray(res.sent) ? res.sent.length : 0;
+        for (const item of Array.isArray(res.sent) ? res.sent : []) {
+          if (item && typeof item.id === "string" && typeof item.isOn === "boolean") {
+            setLightRuntime(item.id, item.isOn);
+          }
+        }
+        renderLights();
         note(`Comando OFF inviato a ${count} luci su topic '${res.topic}'.`);
       } catch (error) {
         note(error.message, true);
@@ -926,6 +988,12 @@
           })
         });
         const count = Array.isArray(res.sent) ? res.sent.length : 0;
+        for (const item of Array.isArray(res.sent) ? res.sent : []) {
+          if (item && typeof item.id === "string" && typeof item.isOn === "boolean") {
+            setLightRuntime(item.id, item.isOn);
+          }
+        }
+        renderLights();
         note(`Comando ON inviato a ${count} luci su topic '${res.topic}'.`);
       } catch (error) {
         note(error.message, true);
@@ -934,8 +1002,7 @@
 
     async function refreshLightsWithFeedback() {
       if (!state.current) return;
-      renderLights();
-      note(`Luci ricaricate: ${state.lights.length} canali.`);
+      await refreshLightsFromServer(false);
     }
 
     async function deleteCurrent() {

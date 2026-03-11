@@ -14,6 +14,7 @@ from paho.mqtt import client as mqtt
 
 APP_PORT = int(os.environ.get("APP_PORT", "8080"))
 CONFIG_FILE = Path(os.environ.get("CONFIG_FILE", "/data/config.json"))
+LIGHT_STATE_FILE = Path(os.environ.get("LIGHT_STATE_FILE", "/data/light_state.json"))
 MQTT_HOST = os.environ.get("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "filippo")
@@ -53,6 +54,7 @@ KIND_META = {
 }
 
 STORE_LOCK = threading.Lock()
+LIGHT_STATE_LOCK = threading.Lock()
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -147,7 +149,7 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
     light_command_topic = clean_text(mqtt_in.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
     light_payload_format = clean_text(mqtt_in.get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
     if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
-        light_payload_format = "frame_hex_space"
+        light_payload_format = "frame_hex_space_crlf"
 
     boards = [normalize_board(item, idx) for idx, item in enumerate(boards_input[:64])]
     if not boards:
@@ -189,6 +191,31 @@ def save_store(store: dict[str, Any]) -> None:
     tmp = CONFIG_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(store, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(CONFIG_FILE)
+
+
+def ensure_light_state_file() -> None:
+    LIGHT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not LIGHT_STATE_FILE.exists():
+        LIGHT_STATE_FILE.write_text('{"instances": {}}\n', encoding="utf-8")
+
+
+def load_light_state() -> dict[str, Any]:
+    ensure_light_state_file()
+    try:
+        content = json.loads(LIGHT_STATE_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        content = {"instances": {}}
+    instances = content.get("instances")
+    if not isinstance(instances, dict):
+        instances = {}
+    return {"instances": instances}
+
+
+def save_light_state(state: dict[str, Any]) -> None:
+    ensure_light_state_file()
+    tmp = LIGHT_STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(LIGHT_STATE_FILE)
 
 
 def find_instance(store: dict[str, Any], instance_id: str) -> dict[str, Any] | None:
@@ -331,6 +358,16 @@ def light_entities(instance: dict[str, Any]) -> list[dict[str, Any]]:
             )
     entities.sort(key=lambda item: (str(item.get("room", "")).lower(), str(item.get("name", "")).lower()))
     return entities
+
+
+def desired_light_state(action: str, previous: bool | None) -> bool | None:
+    if action == "on":
+        return True
+    if action == "off":
+        return False
+    if action == "toggle":
+        return not bool(previous)
+    return previous
 
 
 def list_view(instance: dict[str, Any]) -> dict[str, Any]:
@@ -477,12 +514,29 @@ def api_list_lights(instance_id: str):
     if instance is None:
         return err("Istanza non trovata", 404)
 
+    lights = light_entities(instance)
+    with LIGHT_STATE_LOCK:
+        light_state = load_light_state()
+    by_instance = light_state.get("instances", {}).get(normalized_id, {})
+    if not isinstance(by_instance, dict):
+        by_instance = {}
+
+    for light in lights:
+        stored = by_instance.get(light["id"])
+        if isinstance(stored, dict):
+            if "isOn" in stored:
+                light["isOn"] = bool(stored.get("isOn"))
+            if stored.get("updatedAt"):
+                light["stateUpdatedAt"] = stored.get("updatedAt")
+        else:
+            light["isOn"] = None
+
     return jsonify(
         {
             "instanceId": normalized_id,
             "commandTopic": get_light_command_topic(instance),
             "payloadFormat": get_light_payload_format(instance),
-            "lights": light_entities(instance),
+            "lights": lights,
         }
     )
 
@@ -540,6 +594,17 @@ def api_light_command(instance_id: str):
     else:
         return err("Specifica 'lightId' oppure imposta 'all=true'", 400)
 
+    with LIGHT_STATE_LOCK:
+        light_state = load_light_state()
+    instances_map = light_state.setdefault("instances", {})
+    if not isinstance(instances_map, dict):
+        instances_map = {}
+        light_state["instances"] = instances_map
+    instance_state = instances_map.setdefault(normalized_id, {})
+    if not isinstance(instance_state, dict):
+        instance_state = {}
+        instances_map[normalized_id] = instance_state
+
     sent: list[dict[str, Any]] = []
     for entity in targets:
         try:
@@ -555,6 +620,16 @@ def api_light_command(instance_id: str):
             mqtt_publish(topic, payload, qos=MQTT_COMMAND_QOS, retain=False)
         except Exception as exc:  # noqa: BLE001
             return err(f"Errore pubblicazione comando luce: {exc}", 502)
+        previous_state = instance_state.get(entity["id"]) if isinstance(instance_state.get(entity["id"]), dict) else {}
+        prev_on = previous_state.get("isOn") if isinstance(previous_state, dict) else None
+        next_on = desired_light_state(action, prev_on if isinstance(prev_on, bool) else None)
+        state_updated_at = now_iso()
+        instance_state[entity["id"]] = {
+            "isOn": bool(next_on) if next_on is not None else None,
+            "updatedAt": state_updated_at,
+            "source": "command",
+            "action": action,
+        }
         item = {"id": entity["id"], "action": action}
         if frame_hex:
             item["frameHex"] = frame_hex
@@ -562,7 +637,11 @@ def api_light_command(instance_id: str):
             item["payloadBytesHex"] = payload.hex().upper()
         elif isinstance(payload, str):
             item["payload"] = payload
+        item["isOn"] = instance_state[entity["id"]]["isOn"]
         sent.append(item)
+
+    with LIGHT_STATE_LOCK:
+        save_light_state(light_state)
 
     return jsonify(
         {
