@@ -6,9 +6,9 @@ Stack Docker per:
 - interfaccia web per gestire più istanze DR154
 - configurazione schede protocollo 1.6 (`light`, `shutter`, `dimmer`, `thermostat`)
 - assegnazione nomi canali e stanze
-- interfaccia comando luci (`ON/OFF`) via MQTT
-- controllo luci raggruppato per stanze
-- profili orari luci (fasce orarie + giorni) da interfaccia controllo
+- interfaccia comando dispositivi (`luci`, `tapparelle`, `dimmer`, `termostato`) via MQTT
+- controllo dispositivi raggruppato per stanze
+- profili orari da interfaccia controllo (`luci`, `tapparelle`, `termostato`)
 - pubblicazione configurazione su MQTT (retain)
 
 ## Avvio rapido
@@ -52,8 +52,9 @@ MQTT_PASSWORD=filippo1994
 11. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
 12. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
 13. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
-14. Su ogni card luce puoi usare `⚙` per impostare il profilo orario.
-15. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
+14. In controllo trovi card stanza per `luci`, `tapparelle`, `dimmer`, `termostato`.
+15. Sulle card con `⚙` puoi impostare il profilo orario.
+16. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
 
 Topic di default per la configurazione:
 
@@ -83,7 +84,7 @@ Configurazione DR154 consigliata:
 Nota: non usare la slash iniziale (`/`).  
 `dr154/casa-demo/cmd/light` e `/dr154/casa-demo/cmd/light` sono due topic diversi.
 
-Formati payload supportati per i comandi luce:
+Formati payload supportati per i comandi dispositivo:
 
 - `frame_hex_space`: es. `49 01 51 41 00 00 00 00 00 00 00 00 00 46`
 - `frame_hex_compact`: es. `4901514100000000000000000046`
@@ -118,7 +119,12 @@ Per ridurre i comandi persi in rete:
   - `CONFIG_AUTH_PASSWORD=...`
   - `CONFIG_AUTH_TTL_SEC=43200`
 
-Nota: le azioni supportate per le luci sono `on` e `off`.
+Azioni supportate:
+
+- `light`: `on`, `off`
+- `shutter`: `up`, `down`, `stop`
+- `dimmer`: `on`, `off`, `toggle`, `set(level 0..9)`
+- `thermostat`: `setpoint`, `mode(winter/summer)`, `power(on/off)`
 
 ## Note esposizione Internet
 

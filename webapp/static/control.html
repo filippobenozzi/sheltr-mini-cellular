@@ -13,12 +13,12 @@
     .brand{display:flex;align-items:center;gap:var(--s2);margin:0 0 var(--s1)}
     .logo{width:28px;height:28px;display:block;flex:0 0 28px}
     h1{font-size:17px;margin:0}
-    .small{font-size:12px;color:var(--muted)}
     #now{margin:0 0 var(--s2)}
     #top{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;margin:0 0 var(--s2)}
     #loginBox{background:var(--section);border:1px solid var(--bd);border-radius:6px;padding:var(--s3);margin:0 0 var(--s2)}
     #loginBox h2{font-size:14px;margin:0 0 var(--s2);color:var(--muted)}
     .row{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:flex-end}
+    .small{font-size:12px;color:var(--muted)}
     label{display:flex;flex-direction:column;gap:var(--s1);font-size:12px;color:var(--muted);min-width:200px}
     button,input,select{font:11px/1.2 var(--mono)}
     button{border:1px solid var(--bd);background:#191919;color:#fff;border-radius:6px;padding:6px 10px;cursor:pointer}
@@ -26,8 +26,6 @@
     button:disabled{opacity:.55;cursor:not-allowed}
     input,select{border:1px solid var(--bd);border-radius:6px;padding:6px;background:var(--section);color:var(--fg)}
     ::placeholder{color:var(--muted);opacity:1}
-    a.nav{color:var(--fg);text-decoration:none;border:1px solid var(--bd);border-radius:6px;padding:6px 10px;background:var(--section);font-size:12px}
-    a.nav:hover{background:#2b2b2b}
     .room{background:var(--section);border:1px solid var(--bd);border-radius:6px;padding:var(--s3);margin:var(--s3) 0}
     .room h2{font-size:15px;margin:0 0 var(--s2)}
     .grid{display:flex;flex-wrap:wrap;gap:var(--s2)}
@@ -41,11 +39,17 @@
     .dot.on{background:#2563eb}
     .dot.off{background:#7b7b7b}
     .a{display:flex;margin:6px auto;flex-wrap:wrap}
+    .mode{padding:6px 0 10px;margin:auto}
     .a button{margin-right:5px;min-width:50px;padding:4px 6px;border-radius:6px}
+    .card.sh .a button{min-width:30px}
     .a .pri{background:#1e3a57;color:#fff;border-color:#1e3a57}
     .a .pri:hover{background:#274967}
+    .a .act,.a .act:hover{background:#274967;border-color:#274967;color:#fff}
     .a .lon,.a .lon:hover{background:#1b6b2f;border-color:#1b6b2f;color:#fff}
     .a .loff,.a .loff:hover{background:#9c252d;border-color:#9c252d;color:#fff}
+    .tset{display:flex;margin:auto;gap:6px;align-items:center}
+    .tset input[type=range]{width:118px}
+    .sval{min-width:48px;font-size:12px;font-weight:700}
     #msg{margin-top:var(--s2);font-size:12px;border:1px solid var(--bd);border-radius:6px;background:var(--section);color:var(--fg);padding:var(--s2);white-space:pre-wrap}
     #tpModal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:var(--s3);z-index:20}
     #tpModal.hidden{display:none}
@@ -65,6 +69,7 @@
     .foot{margin-top:auto;padding:var(--s3) 0 2px;text-align:center;font-style:italic;font:12px/1.3 var(--mono);color:var(--muted)}
     .foot a{color:inherit}
     .hidden{display:none !important}
+    @media (max-width:576px){.card.temp{width:100%;max-width:550px}.card{width:calc(50% - 4px);}}
   </style>
 </head>
 <body>
@@ -73,7 +78,9 @@
 
 <div id="loginBox" class="hidden">
   <h2>Login istanza</h2>
-  <div class="row">
+  <input type="text" autocomplete="username" style="display:none">
+  <input type="password" autocomplete="current-password" style="display:none">
+  <div class="row" autocomplete="off">
     <label>Username<input id="loginUser" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label>
     <label>Password<input id="loginPass" type="password" autocomplete="new-password"></label>
     <button id="loginBtn" type="button">Accedi</button>
@@ -120,11 +127,13 @@ const DOW_ALL=DOW.map(x=>x.id);
 const state={
   instanceId:"",
   instance:null,
-  lights:[],
+  status:null,
   token:"",
   authRequired:false,
   running:false,
-  profiles:{light:{}},
+  bulk:false,
+  profiles:{thermostat:{},light:{},shutter:{}},
+  tpKind:"thermostat",
   tpId:"",
   tpData:{enabled:false,entries:[]}
 };
@@ -132,15 +141,19 @@ const state={
 function note(text,isError){msgEl.textContent=text||"";msgEl.style.color=isError?"#ff8a80":"var(--fg)"}
 function esc(v){return String(v??"").replace(/[&<>'"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function sq(v){return String(v??"").replace(/\\/g,"\\\\").replace(/'/g,"\\'")}
+function sid(v){return String(v??"").replace(/[^a-zA-Z0-9_-]/g,"_")}
 function cleanText(value,fallback=""){const txt=String(value??"").trim();return txt||fallback}
 function slugify(value,fallback){const out=cleanText(value,fallback).toLowerCase().replace(/_/g,"-").replace(/[^a-z0-9-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");return out||fallback}
 function clamp(n,a,b){return Math.min(b,Math.max(a,n))}
+function normMode(v){return String(v||"").toLowerCase()==="summer"?"summer":"winter"}
 function normTime(v,d){const s=String(v||"").trim();if(!/^\d{2}:\d{2}$/.test(s))return d;const h=Number(s.slice(0,2)),m=Number(s.slice(3,5));if(!Number.isFinite(h)||!Number.isFinite(m)||h<0||h>23||m<0||m>59)return d;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`}
 function normDay(v){const n=Number(v);if(Number.isFinite(n)){const i=Math.trunc(n);if(i>=1&&i<=7)return i}const k=String(v||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[\s_.-]/g,"");const m={mon:1,monday:1,lun:1,lunedi:1,tue:2,tuesday:2,mar:2,martedi:2,wed:3,wednesday:3,mer:3,mercoledi:3,thu:4,thursday:4,gio:4,giovedi:4,fri:5,friday:5,ven:5,venerdi:5,sat:6,saturday:6,sab:6,sabato:6,sun:7,sunday:7,dom:7,domenica:7,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7};return m[k]||0}
 function normDays(v){const out=[];if(v&&typeof v==="object"&&!Array.isArray(v)){for(const [k,on] of Object.entries(v)){if(!on)continue;const d=normDay(k);if(d)out.push(d)}}else{const a=Array.isArray(v)?v:[v];for(const x of a){const d=normDay(x);if(d)out.push(d)}}const u=[...new Set(out)].sort((a,b)=>a-b);return u.length?u:DOW_ALL.slice()}
 function patchDays(days,day,enabled){const set=new Set(normDays(days));if(enabled)set.add(day);else set.delete(day);const out=[...set].sort((a,b)=>a-b);return out.length?out:DOW_ALL.slice()}
-function normSwitchEntry(e){const a=String(e?.action||"off").toLowerCase();return{time:normTime(e?.time,"00:00"),action:a==="on"?"on":"off",days:normDays(e?.days)}}
-function normSwitchProfile(p){const entries=(Array.isArray(p?.entries)?p.entries:[]).map(normSwitchEntry).slice(0,48);if(entries.length)return{enabled:!!p?.enabled,entries};if((p&&typeof p==="object")&&("time" in p||"action" in p||"days" in p))return{enabled:!!p?.enabled,entries:[normSwitchEntry(p)]};return{enabled:!!p?.enabled,entries:[]}}
+function normThermoEntry(e){const n=Number(e?.setpoint);return{from:normTime(e?.from,"00:00"),to:normTime(e?.to,"23:59"),setpoint:Number.isFinite(n)?clamp(Math.round(n*2)/2,5,30):21,mode:normMode(e?.mode),days:normDays(e?.days)}}
+function normThermoProfile(p){const entries=(Array.isArray(p?.entries)?p.entries:[]).map(normThermoEntry).slice(0,48);return{enabled:!!p?.enabled,entries}}
+function normSwitchEntry(kind,e){const d=kind==="shutter"?"down":"off",a=String(e?.action||d).toLowerCase(),action=kind==="shutter"?(a==="up"?"up":"down"):(a==="on"?"on":"off");return{time:normTime(e?.time,"00:00"),action,days:normDays(e?.days)}}
+function normSwitchProfile(kind,p){const entries=(Array.isArray(p?.entries)?p.entries:[]).map(e=>normSwitchEntry(kind,e)).slice(0,48);if(entries.length)return{enabled:!!p?.enabled,entries};if((p&&typeof p==="object")&&("time" in p||"action" in p||"days" in p))return{enabled:!!p?.enabled,entries:[normSwitchEntry(kind,p)]};return{enabled:!!p?.enabled,entries:[]}}
 
 function forcedInstanceFromUrl(){const parts=location.pathname.split("/").filter(Boolean);if(parts[0]==="control"&&parts[1])return decodeURIComponent(parts[1]);if(parts[0]==="instance"&&parts[1])return decodeURIComponent(parts[1]);const q=new URLSearchParams(location.search).get("instance");return q||""}
 function tokenKey(instanceId){return `sheltr-token-${instanceId}`}
@@ -159,11 +172,11 @@ async function api(path,options={},useAuth=true){
     url=`${url}${sep}token=${encodeURIComponent(state.token)}`;
     if(method!=="GET"&&method!=="HEAD"&&headers["Content-Type"]&&String(headers["Content-Type"]).includes("application/json")){
       if(typeof body==="string"){
-        try{const parsed=JSON.parse(body);if(!("token" in parsed)){parsed.token=state.token;body=JSON.stringify(parsed)}}catch(_){/* non-json body */}}
-      else if(body==null){body=JSON.stringify({token:state.token})}
+        try{const parsed=JSON.parse(body);if(!("token" in parsed)){parsed.token=state.token;body=JSON.stringify(parsed)}}catch(_){/* non-json body */}
+      }else if(body==null){body=JSON.stringify({token:state.token})}
     }
   }
-  const res=await fetch(url,{...options,headers,body});
+  const res=await fetch(url,{...options,headers,body,cache:"no-store"});
   const out=await res.json().catch(()=>({}));
   if(!res.ok){const e=new Error(out.error||`HTTP ${res.status}`);e.status=res.status;throw e}
   return out
@@ -171,49 +184,201 @@ async function api(path,options={},useAuth=true){
 
 function handleAuthError(err){if(err&&err.status===401){state.token="";localStorage.removeItem(tokenKey(state.instanceId));loginUser.value="";loginPass.value="";setControlVisible(false);setLoginVisible(true);note("Sessione scaduta o non valida. Effettua di nuovo il login.",true);return true}return false}
 
-function rebuildProfiles(){const map={light:{}};for(const b of (state.instance?.boards||[])){if(b?.kind!=="light")continue;for(const c of (b?.channels||[])){const id=`${String(b.id||"").trim()}-c${Math.trunc(Number(c?.channel)||0)}`;map.light[id]=normSwitchProfile(c?.profile)}}state.profiles=map}
-function profileOf(id){const p=state.profiles.light[id];return p?normSwitchProfile(p):{enabled:false,entries:[]}}
-function setProfileInInstance(target,id,profile){for(const b of (target?.boards||[])){if(b?.kind!=="light")continue;for(const c of (b?.channels||[])){const cid=`${String(b.id||"").trim()}-c${Math.trunc(Number(c?.channel)||0)}`;if(cid===id){c.profile=normSwitchProfile(profile);return true}}}return false}
+function chId(bid,ch){return String(bid||"").trim()+"-c"+Math.trunc(Number(ch)||0)}
+function rebuildProfiles(){const map={thermostat:{},light:{},shutter:{}};for(const b of (state.instance?.boards||[])){const k=b?.kind;if(k!=="thermostat"&&k!=="light"&&k!=="shutter")continue;for(const c of (b?.channels||[])){const id=chId(b.id,c?.channel);map[k][id]=k==="thermostat"?normThermoProfile(c?.profile):normSwitchProfile(k,c?.profile)}}state.profiles=map}
+function profileOf(kind,id){const byKind=state.profiles[kind]||{};if(byKind[id])return byKind[id];return{enabled:false,entries:[]}}
+function setProfileInInstance(target,kind,id,profile){for(const b of (target?.boards||[])){if(b?.kind!==kind)continue;for(const c of (b?.channels||[])){if(chId(b.id,c?.channel)===id){c.profile=kind==="thermostat"?normThermoProfile(profile):normSwitchProfile(kind,profile);return true}}}return false}
 
-function lightCard(x){const on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'',pe=profileOf(x.id).enabled?' on':'';return '<div class="card"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openLProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="ts"><span class="dot '+(x.isOn===true?'on':(x.isOn===false?'off':'off'))+'"></span>'+(x.isOn===true?'ON':(x.isOn===false?'OFF':'N/D'))+'</div><div class="a"><button'+on+' onclick="cmdLight(\''+sq(x.id)+'\',\'on\')">ON</button><button'+off+' onclick="cmdLight(\''+sq(x.id)+'\',\'off\')">OFF</button></div></div>'}
+function lightCard(x){const on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'',pe=profileOf("light",x.id).enabled?' on':'';return '<div class="card"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openLProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="a"><button'+on+' onclick="cmdLight(\''+sq(x.id)+'\',\'on\')">ON</button><button'+off+' onclick="cmdLight(\''+sq(x.id)+'\',\'off\')">OFF</button></div></div>'}
+function dimmerCard(x){const bid=sid(x.id),rid='dm-'+bid,vid='dv-'+bid,l=Number(x.level),set=Number.isFinite(l)?Math.max(0,Math.min(9,Math.round(l))):0,on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'';return '<div class="card temp"><div class="tt">'+esc(x.name)+'</div><div class="a"><button'+on+' onclick="cmdDimmerAction(\''+sq(x.id)+'\',\'on\')">ON</button><button'+off+' onclick="cmdDimmerAction(\''+sq(x.id)+'\',\'off\')">OFF</button></div><div class="tset"><input id="'+rid+'" type="range" min="0" max="9" step="1" value="'+set+'" oninput="syncDimmer(\''+rid+'\',\''+vid+'\')"><span id="'+vid+'" class="sval">'+set+'</span><button class="pri" onclick="cmdDimmerSet(\''+sq(x.id)+'\',\''+rid+'\')">SET</button></div></div>'}
+function shutterCard(x){const a=String(x.action||"").toLowerCase(),up=a==="up"?' class="act"':'',down=a==="down"?' class="act"':'',pe=profileOf("shutter",x.id).enabled?' on':'';return '<div class="card sh"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openSProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="a"><button'+up+' onclick="cmdShutter(\''+sq(x.id)+'\',\'up\')">SU</button><button onclick="cmdShutter(\''+sq(x.id)+'\',\'stop\')">STOP</button><button'+down+' onclick="cmdShutter(\''+sq(x.id)+'\',\'down\')">GIU</button></div></div>'}
+function thermoCard(x){const bid=sid(x.id),rid='sp-'+bid,vid='sv-'+bid,t=(x.temperature==null||!Number.isFinite(Number(x.temperature)))?'--.- C':Number(x.temperature).toFixed(1)+' C',a=(x.isActive===true)||(x.isActive==null&&x.isOn===true),p=a?'ACCESO':'SPENTO',d=a?'on':'off',cur=Number(x.setpoint),set=Number.isFinite(cur)?Math.max(5,Math.min(30,cur)):21,w=x.mode==='winter'?' class="pri"':'',sm=x.mode==='summer'?' class="pri"':'',pe=profileOf("thermostat",x.id).enabled?' on':'';return '<div class="card temp"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openTProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="ts">Temp: '+t+'<span class="dot '+d+'"></span>'+p+'</div><div class="a mode"><button'+w+' onclick="cmdThermoMode(\''+sq(x.id)+'\',\'winter\')">INVERNO</button><button'+sm+' onclick="cmdThermoMode(\''+sq(x.id)+'\',\'summer\')">ESTATE</button></div><div class="tset"><input id="'+rid+'" type="range" min="5" max="30" step="0.5" value="'+set.toFixed(1)+'" oninput="syncSlider(\''+rid+'\',\''+vid+'\')"><span id="'+vid+'" class="sval">'+set.toFixed(1)+' C</span><button class="pri" onclick="cmdThermoSet(\''+sq(x.id)+'\',\''+rid+'\')">SET</button></div></div>'}
 function sortByName(list){return [...(list||[])].sort((a,b)=>String(a?.name||"").localeCompare(String(b?.name||""),"it",{sensitivity:"base"}))}
-function roomBlock(name,lights){let cards="";for(const x of sortByName(lights))cards+=lightCard(x);if(!cards)cards='<div class="small">Nessuna entita</div>';return '<section class="room"><h2>'+esc(name)+'</h2><div class="grid">'+cards+'</div></section>'}
-function renderRooms(){if(!state.lights.length){roomsEl.innerHTML='<section class="room"><div class="small">Nessuna luce configurata</div></section>';return}const map={};for(const l of state.lights){const room=cleanText(l.room,"Senza stanza");(map[room]=map[room]||[]).push(l)}const names=Object.keys(map).sort((a,b)=>a.localeCompare(b,"it",{sensitivity:"base"}));roomsEl.innerHTML=names.map(n=>roomBlock(n,map[n])).join("")}
+function roomBlock(room){let cards="";for(const x of sortByName(room.thermostats))cards+=thermoCard(x);for(const x of sortByName(room.lights))cards+=lightCard(x);for(const x of sortByName(room.dimmers))cards+=dimmerCard(x);for(const x of sortByName(room.shutters))cards+=shutterCard(x);if(!cards)cards='<div class="small">Nessuna entita</div>';return '<section class="room"><h2>'+esc(room.name)+'</h2><div class="grid">'+cards+'</div></section>'}
 
-async function loadLights(refreshDevices=false,silent=false){if(!state.instanceId||state.running)return false;state.running=true;let ok=false;try{const q=refreshDevices?"?refresh=1":"";const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights${q}`);state.lights=Array.isArray(res.lights)?res.lights:[];renderRooms();lastEl.textContent=`ultimo update: ${new Date().toLocaleTimeString('it-IT')}`;const errs=Array.isArray(res.refreshErrors)?res.refreshErrors:[];if(!silent){if(errs.length)note(`Errori polling: ${errs.map(e=>`${e.address}:${e.error}`).join(" | ")}`,true);else note(`Stato aggiornato (${state.lights.length} luci).`)}ok=true}catch(err){if(!handleAuthError(err)&&!silent)note(err.message,true)}finally{state.running=false}return ok}
+function renderStatus(data,skipNote){
+  state.status=data;
+  const rooms=Array.isArray(data?.rooms)?data.rooms:[];
+  if(!rooms.length){roomsEl.innerHTML='<section class="room"><div class="small">Nessuna stanza configurata</div></section>'}
+  else roomsEl.innerHTML=rooms.map(roomBlock).join("");
+  lastEl.textContent=`ultimo update: ${new Date().toLocaleTimeString('it-IT')}`;
+  if(!skipNote){
+    const errs=Array.isArray(data?.refreshErrors)?data.refreshErrors:[];
+    if(errs.length)note(`Errori polling: ${errs.map(e=>`${e.address}:${e.error}`).join(" | ")}`,true);
+    else note("Stato aggiornato");
+  }
+}
 
-async function sendLightCommandById(id,action){const light=state.lights.find(x=>x.id===id);if(!light)return;try{const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`,{method:"POST",body:JSON.stringify({action,lightId:id,target:{boardId:light.boardId,boardName:light.boardName,address:light.address,channel:light.channel,name:light.name,room:light.room}})});const sent=Array.isArray(res.sent)?res.sent:[];if(sent[0]&&typeof sent[0].isOn==="boolean"){const i=state.lights.findIndex(x=>x.id===id);if(i>=0)state.lights[i].isOn=sent[0].isOn;renderRooms()}const sendCount=sent[0]&&Number.isFinite(Number(sent[0].sendCount))?Number(sent[0].sendCount):1;const verified=!!(sent[0]&&sent[0].verified);const reason=sent[0]&&sent[0].verifyReason?` (${sent[0].verifyReason})`:"";note(`Comando '${action}' inviato x${sendCount}${verified?" confermato dal dispositivo":` in attesa conferma${reason}`}.`)}catch(err){if(!handleAuthError(err))note(err.message,true)}}
-async function sendAll(action){try{const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`,{method:"POST",body:JSON.stringify({action,all:true})});const sent=Array.isArray(res.sent)?res.sent:[];const byId=new Map(sent.map(x=>[x.id,x]));state.lights=state.lights.map(x=>{const m=byId.get(x.id);return m&&typeof m.isOn==="boolean"?{...x,isOn:m.isOn}:x});renderRooms();const sendCount=sent[0]&&Number.isFinite(Number(sent[0].sendCount))?Number(sent[0].sendCount):1;const verifiedCount=sent.filter(x=>x&&x.verified).length;note(`Comando '${action}' inviato a ${sent.length} luci (x${sendCount} per luce, confermate ${verifiedCount}/${sent.length}).`)}catch(err){if(!handleAuthError(err))note(err.message,true)}}
+async function loadStatus(refreshDevices=false,silent=false){
+  if(!state.instanceId||state.running)return false;
+  state.running=true;
+  let ok=false;
+  try{
+    const q=refreshDevices?"?refresh=1":"";
+    const out=await api(`/api/instances/${encodeURIComponent(state.instanceId)}/status${q}`);
+    renderStatus(out,!!silent);
+    ok=true;
+  }catch(err){
+    if(!handleAuthError(err)&&!silent)note(err.message,true);
+  }finally{state.running=false}
+  return ok;
+}
+
+function collectIds(kind){
+  const ids=[];
+  for(const room of (state.status?.rooms||[])){
+    const list=Array.isArray(room?.[kind])?room[kind]:[];
+    for(const item of list){if(item?.id)ids.push(String(item.id))}
+  }
+  return ids;
+}
+
+async function cmd(path,payload,okMessage){
+  try{
+    const out=await api(path,{method:"POST",body:JSON.stringify(payload)});
+    const sent=Array.isArray(out?.sent)?out.sent:[];
+    const verified=sent.filter(x=>x&&x.verified).length;
+    note(`${okMessage} (${sent.length} inviati${sent.length?`, confermati ${verified}/${sent.length}`:""}).`);
+    await loadStatus(false,true);
+    renderStatus(state.status||{},true);
+  }catch(err){
+    if(!handleAuthError(err))note(err.message,true)
+  }
+}
+
+window.cmdLight=(id,action)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`,{lightId:id,action},`Comando luce '${action}'`);
+window.cmdDimmerAction=(id,action)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{dimmerId:id,action},`Comando dimmer '${action}'`);
+window.cmdDimmerSet=(id,inputId)=>{const v=document.getElementById(inputId)?.value;return cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{dimmerId:id,action:"set",level:Number(v)},"Comando dimmer 'set'")};
+window.cmdShutter=(id,action)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/shutters/command`,{shutterId:id,action},`Comando tapparella '${action}'`);
+window.cmdThermoSet=(id,inputId)=>{const v=document.getElementById(inputId)?.value;return cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/thermostats/command`,{thermostatId:id,setpoint:Number(v)},"Comando termostato setpoint")};
+window.cmdThermoMode=(id,mode)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/thermostats/command`,{thermostatId:id,mode},`Comando termostato mode '${mode}'`);
+window.syncSlider=(rid,vid)=>{const r=document.getElementById(rid),v=document.getElementById(vid);if(r&&v){const n=Number(r.value);v.textContent=(Number.isFinite(n)?n.toFixed(1):"--.-")+" C"}};
+window.syncDimmer=(rid,vid)=>{const r=document.getElementById(rid),v=document.getElementById(vid);if(r&&v){const n=Number(r.value);v.textContent=Number.isFinite(n)?String(Math.round(n)):"0"}};
+
+async function sendAll(action){
+  if(state.bulk)return;
+  state.bulk=true;
+  allOnBtn.disabled=true;allOffBtn.disabled=true;
+  let ok=0,ko=0;
+  const lightIds=collectIds("lights");
+  const dimmerIds=collectIds("dimmers");
+  for(const id of lightIds){
+    try{await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`,{method:"POST",body:JSON.stringify({lightId:id,action})});ok++}
+    catch(_){ko++}
+  }
+  for(const id of dimmerIds){
+    try{await api(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{method:"POST",body:JSON.stringify({dimmerId:id,action:action==="on"?"on":"off"})});ok++}
+    catch(_){ko++}
+  }
+  state.bulk=false;
+  allOnBtn.disabled=false;allOffBtn.disabled=false;
+  if(!ok&&!ko){note("Nessuna entita da comandare",true);return}
+  note(`Comando globale '${action}': ${ok} ok${ko?`, ${ko} errori`:""}`,ko>0);
+  await loadStatus(false,true);
+  renderStatus(state.status||{},true);
+}
+
+function rowDaysHtml(i,days){const d=normDays(days);return DOW.map(x=>'<button type="button" class="dw'+(d.includes(x.id)?' on':'')+'" onclick="tpDay('+i+','+x.id+')">'+x.label+'</button>').join('')}
+function switchOpts(kind,current){const c=String(current||"").toLowerCase();if(kind==="shutter")return '<option value="up"'+(c==="up"?' selected':'')+'>SU</option><option value="down"'+(c==="down"?' selected':'')+'>GIU</option>';return '<option value="on"'+(c==="on"?' selected':'')+'>ACCENDI</option><option value="off"'+(c==="off"?' selected':'')+'>SPEGNI</option>'}
+function renderTpRows(){const rows=(state.tpData.entries||[]);if(!rows.length){tpRows.innerHTML='<div class="small">'+(state.tpKind==="thermostat"?'Nessuna fascia: fallback inverno 5C.':'Nessuna fascia oraria configurata.')+'</div>';return}if(state.tpKind==="thermostat"){tpRows.innerHTML=rows.map((e,i)=>'<div class="trb"><div class="tr"><input type="time" value="'+esc(e.from)+'" onchange="tpSet('+i+',\'from\',this.value)"><span>-></span><input type="time" value="'+esc(e.to)+'" onchange="tpSet('+i+',\'to\',this.value)"><input type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" value="'+Number(e.setpoint).toFixed(1)+'" onchange="tpSet('+i+',\'setpoint\',this.value)"><select onchange="tpSet('+i+',\'mode\',this.value)"><option value="winter"'+(e.mode==="winter"?" selected":"")+'>INVERNO</option><option value="summer"'+(e.mode==="summer"?" selected":"")+'>ESTATE</option></select><button class="rm" onclick="tpDel('+i+')">X</button></div><div class="days">'+rowDaysHtml(i,e.days)+'</div></div>').join('');return}tpRows.innerHTML=rows.map((e,i)=>'<div class="trb"><div class="tr"><input type="time" value="'+esc(e.time)+'" onchange="tpSet('+i+',\'time\',this.value)"><select onchange="tpSet('+i+',\'action\',this.value)">'+switchOpts(state.tpKind,e.action)+'</select><button class="rm" onclick="tpDel('+i+')">X</button></div><div class="days">'+rowDaysHtml(i,e.days)+'</div></div>').join('')}
+function openProfile(kind,id){state.tpKind=kind;state.tpId=id;tpTitle.textContent='Profilo Orario - '+id;state.tpData=kind==="thermostat"?normThermoProfile(profileOf("thermostat",id)):normSwitchProfile(kind,profileOf(kind,id));tpEnabled.checked=!!state.tpData.enabled;renderTpRows();tpModal.classList.remove("hidden")}
+function closeProfile(){tpModal.classList.add("hidden");state.tpId="";state.tpKind="thermostat";state.tpData={enabled:false,entries:[]}}
+window.openTProfile=id=>openProfile("thermostat",id);
+window.openLProfile=id=>openProfile("light",id);
+window.openSProfile=id=>openProfile("shutter",id);
+window.tpSet=(i,key,val)=>{const e=state.tpData.entries[i];if(!e)return;if(state.tpKind==="thermostat"){if(key==="from"||key==="to"){e[key]=normTime(val,key==="from"?"00:00":"23:59")}else if(key==="setpoint"){const n=Number(String(val||"").trim().replace(",","."));if(Number.isFinite(n))e.setpoint=clamp(Math.round(n*2)/2,5,30)}else if(key==="mode"){e.mode=normMode(val)}return}if(key==="time")e.time=normTime(val,"00:00");else if(key==="action")e.action=normSwitchEntry(state.tpKind,{action:val}).action}
+window.tpDay=(i,d)=>{const e=state.tpData.entries[i];if(!e)return;const has=normDays(e.days).includes(d);e.days=patchDays(e.days,d,!has);renderTpRows()}
+window.tpDel=i=>{state.tpData.entries.splice(i,1);renderTpRows()}
+
+async function saveProfile(){
+  if(!state.tpId||!state.instance)return;
+  const next=JSON.parse(JSON.stringify(state.instance));
+  const profile=state.tpKind==="thermostat"?normThermoProfile({enabled:tpEnabled.checked,entries:state.tpData.entries}):normSwitchProfile(state.tpKind,{enabled:tpEnabled.checked,entries:state.tpData.entries});
+  if(!setProfileInInstance(next,state.tpKind,state.tpId,profile)){note("Canale non trovato in configurazione",true);return}
+  try{
+    const out=await api(`/api/instances/${encodeURIComponent(state.instance.id)}`,{method:"PUT",body:JSON.stringify({id:next.id,name:next.name,protocolVersion:next.protocolVersion||"1.6",mqtt:next.mqtt||{},boards:next.boards||[]})},true);
+    state.instance=out.instance;
+    rebuildProfiles();
+    closeProfile();
+    await loadStatus(false,true);
+    note("Profilo orario salvato");
+  }catch(err){if(!handleAuthError(err))note(err.message,true)}
+}
 
 function tickNow(){nowEl.textContent=new Date().toLocaleString('it-IT')}
 
-async function login(){if(!state.instanceId)return;try{const out=await api(`/api/instances/${encodeURIComponent(state.instanceId)}/auth/login`,{method:"POST",body:JSON.stringify({username:cleanText(loginUser.value,""),password:cleanText(loginPass.value,"")})},false);state.token=cleanText(out.token,"");if(!state.token)throw new Error("Token non valido");localStorage.setItem(tokenKey(state.instanceId),state.token);loginPass.value="";setLoginVisible(false);setControlVisible(false);const ok=await loadLights(false,false);if(!ok)throw new Error("Login riuscito ma stato non disponibile");setControlVisible(true);note("Login eseguito.")}catch(err){setControlVisible(false);setLoginVisible(true);note(err.message,true)}}
-async function logout(){if(!state.instanceId){setControlVisible(false);setLoginVisible(true);return}try{await api(`/api/instances/${encodeURIComponent(state.instanceId)}/auth/logout`,{method:"POST"},true)}catch(_){/* ignore */}state.token="";localStorage.removeItem(tokenKey(state.instanceId));loginUser.value="";loginPass.value="";setControlVisible(false);setLoginVisible(true);note("Logout eseguito.")}
+async function login(){
+  if(!state.instanceId)return;
+  try{
+    const out=await api(`/api/instances/${encodeURIComponent(state.instanceId)}/auth/login`,{method:"POST",body:JSON.stringify({username:cleanText(loginUser.value,""),password:cleanText(loginPass.value,"")})},false);
+    state.token=cleanText(out.token,"");
+    if(!state.token)throw new Error("Token non valido");
+    localStorage.setItem(tokenKey(state.instanceId),state.token);
+    loginPass.value="";
+    setLoginVisible(false);
+    const ok=await loadStatus(false,false);
+    setControlVisible(ok);
+    if(ok)note("Login eseguito.");
+  }catch(err){setControlVisible(false);setLoginVisible(true);note(err.message,true)}
+}
 
-async function saveLightProfile(){if(!state.tpId||!state.instance)return;const profile=normSwitchProfile({enabled:tpEnabled.checked,entries:state.tpData.entries});const next=JSON.parse(JSON.stringify(state.instance));if(!setProfileInInstance(next,state.tpId,profile)){note("Canale non trovato in configurazione",true);return}try{const out=await api(`/api/instances/${encodeURIComponent(state.instance.id)}`,{method:"PUT",body:JSON.stringify({id:next.id,name:next.name,protocolVersion:next.protocolVersion||"1.6",mqtt:next.mqtt||{},boards:next.boards||[]})},false);state.instance=out.instance;rebuildProfiles();closeLProfile();renderRooms();note("Profilo orario salvato") }catch(err){note(err.message,true)}}
+async function logout(){
+  if(!state.instanceId){setControlVisible(false);setLoginVisible(true);return}
+  try{await api(`/api/instances/${encodeURIComponent(state.instanceId)}/auth/logout`,{method:"POST"},true)}catch(_){/* ignore */}
+  state.token="";
+  localStorage.removeItem(tokenKey(state.instanceId));
+  loginUser.value="";
+  loginPass.value="";
+  setControlVisible(false);
+  setLoginVisible(true);
+  note("Logout eseguito.");
+}
 
-function rowDaysHtml(i,days){const d=normDays(days);return DOW.map(x=>'<button type="button" class="dw'+(d.includes(x.id)?' on':'')+'" onclick="tpDay('+i+','+x.id+')">'+x.label+'</button>').join('')}
-function renderTpRows(){const rows=(state.tpData.entries||[]);if(!rows.length){tpRows.innerHTML='<div class="small">Nessuna fascia oraria configurata.</div>';return}tpRows.innerHTML=rows.map((e,i)=>'<div class="trb"><div class="tr"><input type="time" value="'+esc(e.time)+'" onchange="tpSet('+i+',\'time\',this.value)"><select onchange="tpSet('+i+',\'action\',this.value)"><option value="on"'+(e.action==="on"?' selected':'')+'>ACCENDI</option><option value="off"'+(e.action==="off"?' selected':'')+'>SPEGNI</option></select><button class="rm" onclick="tpDel('+i+')">X</button></div><div class="days">'+rowDaysHtml(i,e.days)+'</div></div>').join('')}
-function openProfile(id){state.tpId=id;tpTitle.textContent='Profilo Orario - '+id;state.tpData=normSwitchProfile(profileOf(id));tpEnabled.checked=!!state.tpData.enabled;renderTpRows();tpModal.classList.remove('hidden')}
-function closeLProfile(){tpModal.classList.add('hidden');state.tpId="";state.tpData={enabled:false,entries:[]}}
-window.openLProfile=id=>openProfile(id);
-window.tpSet=(i,key,val)=>{const e=state.tpData.entries[i];if(!e)return;if(key==="time")e.time=normTime(val,"00:00");else if(key==="action")e.action=(String(val||"").toLowerCase()==="on"?"on":"off")}
-window.tpDay=(i,d)=>{const e=state.tpData.entries[i];if(!e)return;const has=normDays(e.days).includes(d);e.days=patchDays(e.days,d,!has);renderTpRows()}
-window.tpDel=i=>{state.tpData.entries.splice(i,1);renderTpRows()}
-window.cmdLight=(id,action)=>sendLightCommandById(id,action);
+async function init(){
+  const forced=slugify(forcedInstanceFromUrl(),"");
+  if(!forced){note("Istanza non specificata. Apri URL /control/<istanza>",true);return}
+  state.instanceId=forced;
+  tickNow();
+  setInterval(tickNow,1000);
+  setControlVisible(false);
+  setLoginVisible(false);
+  loginUser.value="";
+  loginPass.value="";
+  try{
+    const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}`,{},false);
+    state.instance=res.instance;
+    state.instanceId=res.instance.id;
+    rebuildProfiles();
+    const title=`${state.instance.name} / Sheltr Cloud`;
+    titleEl.textContent=title;
+    document.title=title;
+    state.authRequired=!!(state.instance?.auth?.passwordConfigured);
+    if(state.authRequired){
+      state.token="";
+      localStorage.removeItem(tokenKey(state.instance.id));
+      loginUser.value="";
+      loginPass.value="";
+      setLoginVisible(true);
+      setControlVisible(false);
+      note("Login richiesto per questa istanza.");
+    }else{
+      setLoginVisible(false);
+      const ok=await loadStatus(false,false);
+      setControlVisible(ok);
+    }
+  }catch(err){note(err.message,true)}
+}
 
-async function init(){const forced=slugify(forcedInstanceFromUrl(),"");if(!forced){note("Istanza non specificata. Apri URL /control/<istanza>",true);return}state.instanceId=forced;tickNow();setInterval(tickNow,1000);setControlVisible(false);setLoginVisible(false);try{const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}`,{},false);state.instance=res.instance;state.instanceId=res.instance.id;rebuildProfiles();const title=`${state.instance.name} / Sheltr Cloud`;titleEl.textContent=title;document.title=title;state.authRequired=!!(state.instance?.auth?.passwordConfigured);if(state.authRequired){loginUser.value="";loginPass.value="";state.token="";localStorage.removeItem(tokenKey(state.instance.id));setLoginVisible(true);setControlVisible(false);note("Login richiesto per questa istanza.")}else{setLoginVisible(false);const ok=await loadLights(false,false);setControlVisible(ok)}}catch(err){note(err.message,true)}}
-
-refreshBtn.onclick=()=>loadLights(true,false);
-allOnBtn.onclick=()=>sendAll('on');
-allOffBtn.onclick=()=>sendAll('off');
+refreshBtn.onclick=()=>loadStatus(true,false);
+allOnBtn.onclick=()=>sendAll("on");
+allOffBtn.onclick=()=>sendAll("off");
 logoutBtn.onclick=logout;
 loginBtn.onclick=login;
-loginPass.addEventListener('keydown',ev=>{if(ev.key==='Enter')login()});
-tpAdd.onclick=()=>{state.tpData.entries.push(normSwitchEntry({time:"08:00",action:"off",days:DOW_ALL.slice()}));renderTpRows()};
-tpSave.onclick=saveLightProfile;
-tpClose.onclick=closeLProfile;
-tpModal.onclick=e=>{if(e.target===tpModal)closeLProfile()};
+loginPass.addEventListener("keydown",ev=>{if(ev.key==="Enter")login()});
+tpAdd.onclick=()=>{if(state.tpKind==="thermostat")state.tpData.entries.push(normThermoEntry({from:"08:00",to:"18:00",setpoint:21,mode:"winter",days:DOW_ALL.slice()}));else state.tpData.entries.push(normSwitchEntry(state.tpKind,{time:"08:00",action:state.tpKind==="shutter"?"down":"off",days:DOW_ALL.slice()}));renderTpRows()};
+tpSave.onclick=saveProfile;
+tpClose.onclick=closeProfile;
+tpModal.onclick=e=>{if(e.target===tpModal)closeProfile()};
 
 init();
 </script>
