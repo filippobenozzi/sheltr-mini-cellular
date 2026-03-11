@@ -45,7 +45,8 @@ MQTT_PASSWORD=filippo1994
 6. Premi `Pubblica su MQTT` per inviare la configurazione.
 7. Usa `Controllo Luci` per inviare comandi realtime ai canali luce.
 8. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
-9. La UI mostra lo stato ON/OFF ultimo comando inviato per ogni luce.
+9. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
+10. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
 
 Topic di default per la configurazione:
 
@@ -60,6 +61,17 @@ Topic default comandi luci:
 ```text
 dr154/<istanza>/cmd/light
 ```
+
+Topic default risposta DR154:
+
+```text
+dr154/<istanza>/pub/light
+```
+
+Configurazione DR154 consigliata:
+
+- `Subscriber topic` (DR154): `dr154/<istanza>/cmd/light`
+- `Publish topic` (DR154): `dr154/<istanza>/pub/light`
 
 Nota: non usare la slash iniziale (`/`).  
 `dr154/casa-demo/cmd/light` e `/dr154/casa-demo/cmd/light` sono due topic diversi.
@@ -84,6 +96,11 @@ Per ridurre i comandi persi in rete:
 - per payload `frame_*` su azioni `on/off`, invio ripetuto (idempotente):
   - `MQTT_COMMAND_REPEAT_ONOFF=2`
   - `MQTT_COMMAND_REPEAT_GAP_MS=120`
+- conferma stato via risposta dispositivo (polling `0x40`):
+  - `MQTT_RESPONSE_TIMEOUT_MS=1600`
+  - `MQTT_RESPONSE_RETRIES=1`
+  - `MQTT_RESPONSE_RETRY_DELAY_MS=140`
+  - `MQTT_REQUIRE_RESPONSE=false` (se `true`, il comando fallisce senza conferma)
 
 Nota: le azioni supportate per le luci sono `on` e `off`.
 

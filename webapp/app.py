@@ -28,6 +28,15 @@ MQTT_COMMAND_RETRIES = max(0, min(5, int(os.environ.get("MQTT_COMMAND_RETRIES", 
 MQTT_COMMAND_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_COMMAND_RETRY_DELAY_MS", "180")))
 MQTT_COMMAND_REPEAT_ONOFF = max(1, min(5, int(os.environ.get("MQTT_COMMAND_REPEAT_ONOFF", "2"))))
 MQTT_COMMAND_REPEAT_GAP_MS = max(0, int(os.environ.get("MQTT_COMMAND_REPEAT_GAP_MS", "120")))
+MQTT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("MQTT_RESPONSE_TIMEOUT_MS", "1600")))
+MQTT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("MQTT_RESPONSE_RETRIES", "1"))))
+MQTT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_RETRY_DELAY_MS", "140")))
+MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 LIGHT_COMMAND_ACTIONS = {"on", "off"}
 LIGHT_PAYLOAD_FORMATS = {
     "json",
@@ -153,6 +162,11 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
     boards_input = boards_raw if isinstance(boards_raw, list) else []
     mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
     light_command_topic = clean_text(mqtt_in.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
+    response_raw = mqtt_in.get("lightResponseTopic")
+    if isinstance(response_raw, str):
+        light_response_topic = response_raw.strip()
+    else:
+        light_response_topic = f"{MQTT_BASE_TOPIC}/{instance_id}/pub/light"
     light_payload_format = clean_text(mqtt_in.get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
     if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
         light_payload_format = "frame_hex_space_crlf"
@@ -168,6 +182,7 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
         "boards": boards,
         "mqtt": {
             "lightCommandTopic": light_command_topic,
+            "lightResponseTopic": light_response_topic,
             "lightPayloadFormat": light_payload_format,
         },
         "updatedAt": now_iso(),
@@ -231,6 +246,14 @@ def find_instance(store: dict[str, Any], instance_id: str) -> dict[str, Any] | N
     return None
 
 
+def mqtt_payload_bytes(payload: Any) -> bytes:
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    if isinstance(payload, dict):
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return str(payload).encode("utf-8")
+
+
 def mqtt_publish(
     topic: str,
     payload: Any,
@@ -240,12 +263,7 @@ def mqtt_publish(
     retries: int = 0,
     retry_delay_ms: int = 0,
 ) -> None:
-    if isinstance(payload, (bytes, bytearray)):
-        raw_payload = bytes(payload)
-    elif isinstance(payload, dict):
-        raw_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    else:
-        raw_payload = str(payload).encode("utf-8")
+    raw_payload = mqtt_payload_bytes(payload)
     attempts = max(1, retries + 1)
     last_error: Exception | None = None
 
@@ -295,6 +313,15 @@ def get_light_command_topic(instance: dict[str, Any]) -> str:
     return clean_text(mqtt_cfg.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
 
 
+def get_light_response_topic(instance: dict[str, Any]) -> str:
+    instance_id = clean_text(instance.get("id"), "dr154-1")
+    mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
+    raw = mqtt_cfg.get("lightResponseTopic")
+    if isinstance(raw, str):
+        return raw.strip()
+    return f"{MQTT_BASE_TOPIC}/{instance_id}/pub/light"
+
+
 def get_light_payload_format(instance: dict[str, Any]) -> str:
     mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
     fmt = clean_text(mqtt_cfg.get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
@@ -316,6 +343,223 @@ def frame_to_hex(frame: bytes, compact: bool = False) -> str:
     if compact:
         return "".join(f"{byte:02X}" for byte in frame)
     return " ".join(f"{byte:02X}" for byte in frame)
+
+
+def parse_protocol_frame(frame: bytes) -> dict[str, Any]:
+    return {
+        "start": frame[0],
+        "address": frame[1],
+        "command": frame[2],
+        "g": [frame[3 + idx] for idx in range(10)],
+        "end": frame[13],
+        "hex": frame_to_hex(frame),
+    }
+
+
+def extract_binary_protocol_frame(payload: bytes) -> bytes | None:
+    if len(payload) < FRAME_LEN:
+        return None
+    for idx in range(0, len(payload) - FRAME_LEN + 1):
+        if payload[idx] != FRAME_START:
+            continue
+        if payload[idx + FRAME_LEN - 1] == FRAME_END:
+            return payload[idx : idx + FRAME_LEN]
+    return None
+
+
+def extract_hex_protocol_frame(payload: bytes) -> bytes | None:
+    text = payload.decode("utf-8", errors="ignore")
+    tokens = re.findall(r"[0-9A-Fa-f]{2}", text)
+    if len(tokens) < FRAME_LEN:
+        return None
+    values = [int(token, 16) for token in tokens]
+    for idx in range(0, len(values) - FRAME_LEN + 1):
+        chunk = values[idx : idx + FRAME_LEN]
+        if chunk[0] == FRAME_START and chunk[FRAME_LEN - 1] == FRAME_END:
+            return bytes(chunk)
+    return None
+
+
+def parse_frame_from_mqtt_payload(payload: bytes) -> dict[str, Any] | None:
+    frame = extract_binary_protocol_frame(payload)
+    if frame is None:
+        frame = extract_hex_protocol_frame(payload)
+    if frame is None:
+        return None
+    return parse_protocol_frame(frame)
+
+
+def frame_payload_for_format(frame: bytes, payload_format: str) -> Any:
+    frame_hex_spaced = frame_to_hex(frame, compact=False)
+    if payload_format == "frame_bytes":
+        return frame
+    if payload_format == "frame_hex_compact":
+        return frame_to_hex(frame, compact=True)
+    if payload_format == "frame_hex_space_crlf":
+        return frame_hex_spaced + "\r\n"
+    if payload_format == "frame_hex_compact_crlf":
+        return frame_to_hex(frame, compact=True) + "\r\n"
+    return frame_hex_spaced
+
+
+def decode_poll_output_mask(frame: dict[str, Any]) -> int | None:
+    if to_int(frame.get("command"), -1) != 0x40:
+        return None
+    g = frame.get("g")
+    if not isinstance(g, list) or len(g) < 2:
+        return None
+    return clamp(to_int(g[1], 0), 0, 255)
+
+
+def mqtt_publish_and_wait_frame(
+    *,
+    publish_topic: str,
+    publish_payload: Any,
+    response_topic: str,
+    expected_address: int,
+    expected_command: int,
+    timeout_ms: int,
+    qos: int,
+) -> dict[str, Any] | None:
+    if not response_topic:
+        return None
+
+    seen_frames: list[dict[str, Any]] = []
+    matched: dict[str, Any] | None = None
+    subscribed = threading.Event()
+    result_ready = threading.Event()
+    error_message: list[str] = []
+    raw_payload = mqtt_payload_bytes(publish_payload)
+
+    def on_subscribe(
+        client: mqtt.Client,
+        _userdata: Any,
+        _mid: int,
+        _granted_qos: list[int],
+        _properties: Any = None,
+    ) -> None:
+        _ = client
+        subscribed.set()
+
+    def on_message(client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+        _ = client
+        nonlocal matched
+        frame = parse_frame_from_mqtt_payload(bytes(msg.payload or b""))
+        if frame is None:
+            return
+        seen_frames.append(frame)
+        if (
+            to_int(frame.get("address"), -1) == expected_address
+            and to_int(frame.get("command"), -1) == expected_command
+        ):
+            matched = frame
+            result_ready.set()
+
+    client_id = f"iotsheltr-rx-{os.getpid()}-{int(time.time() * 1000)}"
+    client = mqtt.Client(
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        client_id=client_id,
+        protocol=mqtt.MQTTv311,
+    )
+    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    client.on_message = on_message
+    client.on_subscribe = on_subscribe
+
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        client.loop_start()
+        sub_rc, _ = client.subscribe(response_topic, qos=min(1, max(0, qos)))
+        if sub_rc not in (0, mqtt.MQTT_ERR_SUCCESS):
+            raise RuntimeError(f"Subscribe MQTT fallita rc={sub_rc}")
+        if not subscribed.wait(timeout=2):
+            raise RuntimeError("Timeout subscribe MQTT su topic risposta")
+        pub_info = client.publish(publish_topic, raw_payload, qos=qos, retain=False)
+        if qos > 0:
+            pub_info.wait_for_publish(timeout=MQTT_PUBLISH_TIMEOUT_SEC)
+            if not pub_info.is_published():
+                raise RuntimeError("Timeout publish MQTT richiesta stato")
+        elif getattr(pub_info, "rc", None) not in (0, None):
+            raise RuntimeError(f"Publish MQTT richiesta stato fallita rc={getattr(pub_info, 'rc', None)}")
+        result_ready.wait(timeout=max(0.2, timeout_ms / 1000.0))
+    except Exception as exc:  # noqa: BLE001
+        error_message.append(str(exc))
+    finally:
+        try:
+            client.loop_stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if matched is not None:
+        return {
+            "matched": matched,
+            "framesSeen": len(seen_frames),
+        }
+    if error_message:
+        return {
+            "matched": None,
+            "framesSeen": len(seen_frames),
+            "error": "; ".join(error_message),
+        }
+    return {
+        "matched": None,
+        "framesSeen": len(seen_frames),
+        "error": "Timeout risposta dispositivo",
+    }
+
+
+def poll_light_state_via_mqtt(
+    *,
+    command_topic: str,
+    response_topic: str,
+    payload_format: str,
+    address: int,
+    channel: int,
+) -> dict[str, Any]:
+    if not response_topic:
+        return {"verified": False, "reason": "response_topic_non_configurato"}
+    if response_topic.strip() == command_topic.strip():
+        return {"verified": False, "reason": "response_topic_uguale_al_topic_comandi"}
+    if not payload_format.startswith("frame_"):
+        return {"verified": False, "reason": "payload_non_frame"}
+
+    poll_frame = build_protocol_frame(address, 0x40, [])
+    poll_payload = frame_payload_for_format(poll_frame, payload_format)
+    attempts = max(1, MQTT_RESPONSE_RETRIES + 1)
+
+    for attempt in range(1, attempts + 1):
+        outcome = mqtt_publish_and_wait_frame(
+            publish_topic=command_topic,
+            publish_payload=poll_payload,
+            response_topic=response_topic,
+            expected_address=address,
+            expected_command=0x40,
+            timeout_ms=MQTT_RESPONSE_TIMEOUT_MS,
+            qos=MQTT_COMMAND_QOS,
+        ) or {}
+        matched = outcome.get("matched")
+        if isinstance(matched, dict):
+            output_mask = decode_poll_output_mask(matched)
+            if output_mask is not None:
+                bit = 1 << (clamp(channel, 1, 8) - 1)
+                return {
+                    "verified": True,
+                    "isOn": bool(output_mask & bit),
+                    "outputMask": output_mask,
+                    "frameHex": matched.get("hex"),
+                    "framesSeen": to_int(outcome.get("framesSeen"), 0),
+                }
+
+        if attempt < attempts and MQTT_RESPONSE_RETRY_DELAY_MS > 0:
+            time.sleep(MQTT_RESPONSE_RETRY_DELAY_MS / 1000.0)
+
+    reason = ""
+    if isinstance(outcome, dict):
+        reason = clean_text(outcome.get("error"), "")
+    return {"verified": False, "reason": reason or "nessuna_risposta_poll"}
 
 
 def light_payload_for_target(
@@ -454,6 +698,10 @@ def api_meta():
             "mqttCommandRetryDelayMs": MQTT_COMMAND_RETRY_DELAY_MS,
             "mqttCommandRepeatOnOff": MQTT_COMMAND_REPEAT_ONOFF,
             "mqttCommandRepeatGapMs": MQTT_COMMAND_REPEAT_GAP_MS,
+            "mqttResponseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
+            "mqttResponseRetries": MQTT_RESPONSE_RETRIES,
+            "mqttResponseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+            "mqttRequireResponse": MQTT_REQUIRE_RESPONSE,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
     )
@@ -581,6 +829,7 @@ def api_list_lights(instance_id: str):
         {
             "instanceId": normalized_id,
             "commandTopic": get_light_command_topic(instance),
+            "responseTopic": get_light_response_topic(instance),
             "payloadFormat": get_light_payload_format(instance),
             "lights": lights,
         }
@@ -605,6 +854,11 @@ def api_light_command(instance_id: str):
     topic = clean_text(body.get("topic"), get_light_command_topic(instance))
     if not topic:
         return err("Topic MQTT non valido", 400)
+    response_topic_raw = body.get("responseTopic")
+    if isinstance(response_topic_raw, str):
+        response_topic = response_topic_raw.strip()
+    else:
+        response_topic = get_light_response_topic(instance)
     payload_format = clean_text(body.get("payloadFormat"), get_light_payload_format(instance)).lower()
     if payload_format not in LIGHT_PAYLOAD_FORMATS:
         return err("Formato payload non valido", 400)
@@ -682,11 +936,23 @@ def api_light_command(instance_id: str):
         previous_state = instance_state.get(entity["id"]) if isinstance(instance_state.get(entity["id"]), dict) else {}
         prev_on = previous_state.get("isOn") if isinstance(previous_state, dict) else None
         next_on = desired_light_state(action, prev_on if isinstance(prev_on, bool) else None)
+        verification = poll_light_state_via_mqtt(
+            command_topic=topic,
+            response_topic=response_topic,
+            payload_format=payload_format,
+            address=clamp(to_int(entity.get("address"), 0), 0, 254),
+            channel=clamp(to_int(entity.get("channel"), 1), 1, 8),
+        )
+        if isinstance(verification.get("isOn"), bool):
+            next_on = bool(verification["isOn"])
+        if MQTT_REQUIRE_RESPONSE and not bool(verification.get("verified")):
+            reason = clean_text(verification.get("reason"), "nessuna risposta")
+            return err(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}", 502)
         state_updated_at = now_iso()
         instance_state[entity["id"]] = {
             "isOn": bool(next_on) if next_on is not None else None,
             "updatedAt": state_updated_at,
-            "source": "command",
+            "source": "poll" if bool(verification.get("verified")) else "command",
             "action": action,
         }
         item = {"id": entity["id"], "action": action}
@@ -698,6 +964,13 @@ def api_light_command(instance_id: str):
             item["payload"] = payload
         item["sendCount"] = send_count
         item["publishRetries"] = MQTT_COMMAND_RETRIES
+        item["verified"] = bool(verification.get("verified"))
+        if verification.get("frameHex"):
+            item["verifyFrameHex"] = verification.get("frameHex")
+        if verification.get("outputMask") is not None:
+            item["verifyOutputMask"] = verification.get("outputMask")
+        if verification.get("reason"):
+            item["verifyReason"] = verification.get("reason")
         item["isOn"] = instance_state[entity["id"]]["isOn"]
         sent.append(item)
 
@@ -708,6 +981,7 @@ def api_light_command(instance_id: str):
         {
             "ok": True,
             "topic": topic,
+            "responseTopic": response_topic,
             "payloadFormat": payload_format,
             "qos": MQTT_COMMAND_QOS,
             "retain": False,
@@ -717,6 +991,10 @@ def api_light_command(instance_id: str):
                 "repeatOnOff": MQTT_COMMAND_REPEAT_ONOFF,
                 "repeatGapMs": MQTT_COMMAND_REPEAT_GAP_MS,
                 "publishTimeoutSec": MQTT_PUBLISH_TIMEOUT_SEC,
+                "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
+                "responseRetries": MQTT_RESPONSE_RETRIES,
+                "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+                "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": sent,
         }

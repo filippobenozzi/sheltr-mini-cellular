@@ -68,6 +68,7 @@
         <h2 id="instanceTitle">Istanza</h2>
         <div class="row">
           <label>Topic comandi luci<input id="lightTopicInput"></label>
+          <label>Topic risposta DR154<input id="lightResponseTopicInput" placeholder="es. dr154/casa-demo/pub/light"></label>
           <label>Formato payload
             <select id="lightPayloadFormat">
               <option value="frame_hex_space">Frame HEX con spazi</option>
@@ -102,6 +103,7 @@
       panel: document.getElementById("panel"),
       instanceTitle: document.getElementById("instanceTitle"),
       lightTopicInput: document.getElementById("lightTopicInput"),
+      lightResponseTopicInput: document.getElementById("lightResponseTopicInput"),
       lightPayloadFormat: document.getElementById("lightPayloadFormat"),
       saveRouteBtn: document.getElementById("saveRouteBtn"),
       refreshBtn: document.getElementById("refreshBtn"),
@@ -128,6 +130,10 @@
 
     function defaultLightTopic(instanceId) {
       return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
+    }
+
+    function defaultLightResponseTopic(instanceId) {
+      return `${state.mqttBaseTopic}/${instanceId}/pub/light`;
     }
 
     async function api(path, options = {}) {
@@ -188,6 +194,8 @@
       el.toConfig.href = `/instance/${encodeURIComponent(state.current.id)}/config`;
       const topic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
       el.lightTopicInput.value = topic;
+      const responseTopic = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopic(state.current.id));
+      el.lightResponseTopicInput.value = responseTopic;
       const fmt = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
       el.lightPayloadFormat.value = fmt;
       renderLights();
@@ -243,6 +251,7 @@
         const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights`);
         state.lights = Array.isArray(res.lights) ? res.lights : [];
         if (res.commandTopic) el.lightTopicInput.value = res.commandTopic;
+        if (typeof res.responseTopic === "string") el.lightResponseTopicInput.value = res.responseTopic;
         if (res.payloadFormat) el.lightPayloadFormat.value = res.payloadFormat;
         renderLights();
         if (!silent) note(`Stato aggiornato (${state.lights.length} luci).`);
@@ -257,6 +266,7 @@
         const payload = {
           action,
           topic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+          responseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
           payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf"),
           lightId: light.id,
           target: {
@@ -280,7 +290,10 @@
         }
         const frameHex = sent[0] && sent[0].frameHex ? sent[0].frameHex : "";
         const sendCount = sent[0] && Number.isFinite(Number(sent[0].sendCount)) ? Number(sent[0].sendCount) : 1;
-        note(`Comando '${action}' inviato x${sendCount}.${frameHex ? ` Frame: ${frameHex}` : ""}`);
+        const verified = !!(sent[0] && sent[0].verified);
+        const reason = sent[0] && sent[0].verifyReason ? ` (${sent[0].verifyReason})` : "";
+        const verifyText = verified ? " confermato dal dispositivo" : " in attesa conferma dispositivo";
+        note(`Comando '${action}' inviato x${sendCount}${verifyText}${verified ? "" : reason}.${frameHex ? ` Frame: ${frameHex}` : ""}`);
       } catch (err) {
         note(err.message, true);
       }
@@ -295,6 +308,7 @@
             action,
             all: true,
             topic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+            responseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
             payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
           })
         });
@@ -306,7 +320,10 @@
         });
         renderLights();
         const sendCount = sent[0] && Number.isFinite(Number(sent[0].sendCount)) ? Number(sent[0].sendCount) : 1;
-        note(`Comando '${action}' inviato a ${sent.length} luci (x${sendCount} per luce).`);
+        const verifiedCount = sent.filter((x) => x && x.verified).length;
+        const unverified = sent.find((x) => x && !x.verified && x.verifyReason);
+        const reason = unverified ? ` Primo errore: ${unverified.verifyReason}` : "";
+        note(`Comando '${action}' inviato a ${sent.length} luci (x${sendCount} per luce, confermate ${verifiedCount}/${sent.length}).${reason}`);
       } catch (err) {
         note(err.message, true);
       }
@@ -321,6 +338,7 @@
           protocolVersion: state.current.protocolVersion || "1.6",
           mqtt: {
             lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+            lightResponseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
             lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
           },
           boards: state.current.boards || []
