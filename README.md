@@ -6,6 +6,7 @@ Stack Docker per:
 - interfaccia web per gestire più istanze DR154
 - configurazione schede protocollo 1.6 (`light`, `shutter`, `dimmer`, `thermostat`)
 - assegnazione nomi canali e stanze
+- interfaccia comando luci (`ON/OFF/TOGGLE`) via MQTT
 - pubblicazione configurazione su MQTT (retain)
 
 ## Avvio rapido
@@ -41,6 +42,7 @@ MQTT_PASSWORD=filippo1994
 4. Imposta indirizzo, range canali, nome canale e stanza.
 5. Salva.
 6. Premi `Pubblica su MQTT` per inviare la configurazione.
+7. Usa `Controllo Luci` per inviare comandi realtime ai canali luce.
 
 Topic di default per la configurazione:
 
@@ -49,6 +51,12 @@ dr154/<istanza>/config
 ```
 
 Messaggio pubblicato in JSON, con `retain=true`.
+
+Topic default comandi luci:
+
+```text
+dr154/<istanza>/cmd/light
+```
 
 ## Note esposizione Internet
 

@@ -9,6 +9,8 @@ services:
       - "${MQTT_PORT:-1883}:1883"
       - "${MQTT_WS_PORT:-9001}:9001"
     command: ["/bin/sh", "/mosquitto/config/init-mosquitto.sh"]
+    networks:
+      - default
     volumes:
       - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mqtt/init-mosquitto.sh:/mosquitto/config/init-mosquitto.sh:ro
@@ -21,8 +23,9 @@ services:
     restart: unless-stopped
     depends_on:
       - mqtt
-    ports:
-      - "${WEB_PORT:-8080}:8080"
+    networks:
+      - pangolin
+      - default
     environment:
       APP_PORT: "8080"
       CONFIG_FILE: /data/config.json
@@ -38,3 +41,7 @@ volumes:
   mqtt_data:
   mqtt_log:
   web_data:
+
+networks:
+  pangolin:
+    external: true
