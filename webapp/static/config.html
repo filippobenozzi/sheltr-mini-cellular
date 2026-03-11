@@ -48,10 +48,23 @@
 <body>
   <div class="topbar">
     <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1>Programmazione Schede</h1></div>
-    <a class="nav" id="openControlTop" href="/control">Apri Controllo</a>
+    <div class="row">
+      <a class="nav" id="openControlTop" href="/control">Apri Controllo</a>
+      <button id="configLogout" type="button" class="hidden">Logout config</button>
+    </div>
   </div>
 
-  <main class="layout">
+  <section class="box stack hidden" id="configLoginBox">
+    <h2>Login Configurazione</h2>
+    <div class="row">
+      <label>Username config<input id="configUser" autocomplete="username"></label>
+      <label>Password config<input id="configPass" type="password" autocomplete="current-password"></label>
+      <button id="configLoginBtn" type="button">Accedi</button>
+    </div>
+    <p class="small">Credenziali impostate da `.env` (`CONFIG_AUTH_USERNAME` / `CONFIG_AUTH_PASSWORD`).</p>
+  </section>
+
+  <main class="layout hidden" id="configMain">
     <section class="box stack">
       <h2>Istanze DR154</h2>
       <form id="createForm" class="row">
@@ -88,8 +101,9 @@
         <div class="row" style="margin-top:8px;">
           <label>Username login controllo<input id="authUsername" placeholder="es. filippo"></label>
           <label>Password login controllo
-            <input id="authPassword" type="password" placeholder="Lascia vuoto per non cambiare">
+            <input id="authPassword" type="text" placeholder="Visibile: nuova password o vuoto">
           </label>
+          <label>Rimuovi password controllo<input id="authPasswordClear" type="checkbox"></label>
         </div>
 
         <div class="row" style="margin-top:8px;">
@@ -116,9 +130,22 @@
       thermostat: { label: "Termostati", maxChannels: 8, prefix: "Termostato" }
     };
 
-    const state = { instances: [], current: null, currentId: null, mqttBaseTopic: "dr154" };
+    const state = {
+      instances: [],
+      current: null,
+      currentId: null,
+      mqttBaseTopic: "dr154",
+      configAuthRequired: false,
+      configToken: ""
+    };
 
     const el = {
+      configMain: document.getElementById("configMain"),
+      configLoginBox: document.getElementById("configLoginBox"),
+      configUser: document.getElementById("configUser"),
+      configPass: document.getElementById("configPass"),
+      configLoginBtn: document.getElementById("configLoginBtn"),
+      configLogout: document.getElementById("configLogout"),
       openControlTop: document.getElementById("openControlTop"),
       createForm: document.getElementById("createForm"),
       newId: document.getElementById("newId"),
@@ -136,6 +163,7 @@
       boardsCount: document.getElementById("boardsCount"),
       authUsername: document.getElementById("authUsername"),
       authPassword: document.getElementById("authPassword"),
+      authPasswordClear: document.getElementById("authPasswordClear"),
       addBoard: document.getElementById("addBoard"),
       saveBtn: document.getElementById("saveBtn"),
       publishBtn: document.getElementById("publishBtn"),
@@ -185,6 +213,27 @@
       return `/control/${encodeURIComponent(instanceId)}`;
     }
 
+    function configTokenKey() {
+      return "sheltr-config-token";
+    }
+
+    function setConfigAccess(allowed) {
+      el.configMain.classList.toggle("hidden", !allowed);
+      el.configLoginBox.classList.toggle("hidden", allowed || !state.configAuthRequired);
+      el.configLogout.classList.toggle("hidden", !state.configAuthRequired || !allowed);
+    }
+
+    function handleConfigAuthError(err) {
+      if (err && err.status === 401) {
+        state.configToken = "";
+        localStorage.removeItem(configTokenKey());
+        setConfigAccess(false);
+        note("Sessione configurazione scaduta o non valida. Effettua il login config.", true);
+        return true;
+      }
+      return false;
+    }
+
     function normalizeBoard(raw, index) {
       const board = raw && typeof raw === "object" ? raw : {};
       const kind = KIND_META[board.kind] ? board.kind : "light";
@@ -219,11 +268,39 @@
       return { id, name, address, kind, channelStart, channelEnd, channels };
     }
 
-    async function api(path, options = {}) {
-      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      return body;
+    async function api(path, options = {}, useConfigAuth = true) {
+      const method = String(options.method || "GET").toUpperCase();
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      let url = path;
+      let body = options.body;
+      if (useConfigAuth && state.configToken) {
+        headers["X-Config-Token"] = state.configToken;
+        const sep = url.includes("?") ? "&" : "?";
+        url = `${url}${sep}configToken=${encodeURIComponent(state.configToken)}`;
+        if (method !== "GET" && method !== "HEAD" && String(headers["Content-Type"]).includes("application/json")) {
+          if (typeof body === "string") {
+            try {
+              const parsed = JSON.parse(body);
+              if (!("configToken" in parsed)) {
+                parsed.configToken = state.configToken;
+                body = JSON.stringify(parsed);
+              }
+            } catch (_) {
+              /* non-json body */
+            }
+          } else if (body == null) {
+            body = JSON.stringify({ configToken: state.configToken });
+          }
+        }
+      }
+      const res = await fetch(url, { ...options, headers, body });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(out.error || `HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return out;
     }
 
     function forcedInstanceFromUrl() {
@@ -290,6 +367,7 @@
       el.lightPayloadFormat.value = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
       el.authUsername.value = cleanText(state.current?.auth?.username, "");
       el.authPassword.value = "";
+      el.authPasswordClear.checked = false;
       el.boardsCount.value = String((state.current.boards || []).length);
 
       const url = controlUrl(state.current.id);
@@ -412,14 +490,15 @@
         },
         auth: {
           username: cleanText(el.authUsername.value, ""),
-          password: cleanText(el.authPassword.value, "")
+          password: cleanText(el.authPassword.value, ""),
+          clearPassword: !!el.authPasswordClear.checked
         },
         boards: state.current.boards
       };
     }
 
     async function loadInstances(preferredId = "") {
-      const res = await api("/api/instances");
+      const res = await api("/api/config/instances");
       state.instances = Array.isArray(res.instances) ? res.instances : [];
       renderInstances();
       if (preferredId && state.instances.some((x) => x.id === preferredId)) return loadInstance(preferredId);
@@ -430,7 +509,7 @@
 
     async function loadInstance(instanceId) {
       const id = slugify(instanceId, "dr154-1");
-      const res = await api(`/api/instances/${encodeURIComponent(id)}`);
+      const res = await api(`/api/config/instances/${encodeURIComponent(id)}`);
       state.current = res.instance;
       state.currentId = res.instance.id;
       renderInstances();
@@ -442,7 +521,7 @@
       try {
         const id = slugify(el.newId.value, "dr154-1");
         const name = cleanText(el.newName.value, id);
-        await api("/api/instances", {
+        await api("/api/config/instances", {
           method: "POST",
           body: JSON.stringify({
             id,
@@ -456,6 +535,7 @@
         note(`Istanza '${id}' creata.`);
         await loadInstances(id);
       } catch (err) {
+        if (handleConfigAuthError(err)) return;
         note(err.message, true);
       }
     }
@@ -464,7 +544,7 @@
       if (!state.current) return null;
       const payload = currentPayload();
       const fromId = state.current.id;
-      const res = await api(`/api/instances/${encodeURIComponent(fromId)}`, {
+      const res = await api(`/api/config/instances/${encodeURIComponent(fromId)}`, {
         method: "PUT",
         body: JSON.stringify(payload)
       });
@@ -472,6 +552,7 @@
       state.currentId = res.instance.id;
       if (!silent) note("Configurazione salvata.");
       el.authPassword.value = "";
+      el.authPasswordClear.checked = false;
       await loadInstances(state.current.id);
       return res.instance;
     }
@@ -480,12 +561,13 @@
       if (!state.current) return;
       try {
         const saved = await saveCurrent(true);
-        const res = await api(`/api/instances/${encodeURIComponent(saved.id)}/publish`, {
+        const res = await api(`/api/config/instances/${encodeURIComponent(saved.id)}/publish`, {
           method: "POST",
           body: JSON.stringify({})
         });
         note(`Configurazione pubblicata su '${res.topic}'.`);
       } catch (err) {
+        if (handleConfigAuthError(err)) return;
         note(err.message, true);
       }
     }
@@ -495,10 +577,11 @@
       if (!window.confirm(`Eliminare istanza '${state.current.id}'?`)) return;
       try {
         const id = state.current.id;
-        await api(`/api/instances/${encodeURIComponent(id)}`, { method: "DELETE" });
+        await api(`/api/config/instances/${encodeURIComponent(id)}`, { method: "DELETE" });
         note(`Istanza '${id}' eliminata.`);
         await loadInstances("");
       } catch (err) {
+        if (handleConfigAuthError(err)) return;
         note(err.message, true);
       }
     }
@@ -509,24 +592,83 @@
       renderBoards();
     }
 
+    async function configLogin() {
+      try {
+        const out = await api("/api/config/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: cleanText(el.configUser.value, ""),
+            password: cleanText(el.configPass.value, "")
+          })
+        }, false);
+        state.configToken = cleanText(out.token, "");
+        if (state.configAuthRequired && !state.configToken) throw new Error("Token configurazione non valido");
+        if (state.configToken) localStorage.setItem(configTokenKey(), state.configToken);
+        el.configPass.value = "";
+        setConfigAccess(true);
+        await loadInstances(slugify(forcedInstanceFromUrl(), ""));
+        note("Login configurazione eseguito.");
+      } catch (err) {
+        if (handleConfigAuthError(err)) return;
+        note(err.message, true);
+      }
+    }
+
+    async function configLogout() {
+      try {
+        await api("/api/config/auth/logout", { method: "POST" }, true);
+      } catch (_) {
+        /* ignore */
+      }
+      state.configToken = "";
+      localStorage.removeItem(configTokenKey());
+      setConfigAccess(false);
+      state.instances = [];
+      state.current = null;
+      state.currentId = null;
+      renderInstances();
+      renderEditor();
+      note("Logout configurazione eseguito.");
+    }
+
     async function bootstrap() {
       try {
-        const meta = await api("/api/meta");
+        const authMeta = await api("/api/config/auth", {}, false);
+        state.configAuthRequired = !!authMeta.required;
+        el.configUser.value = cleanText(authMeta.username, "");
+        state.configToken = cleanText(localStorage.getItem(configTokenKey()), "");
+
+        const meta = await api("/api/config/meta", {}, !state.configAuthRequired || !!state.configToken);
         state.mqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154");
       } catch (_) {
         state.mqttBaseTopic = "dr154";
       }
-      await loadInstances(slugify(forcedInstanceFromUrl(), ""));
-      note("Pronto.");
+
+      if (state.configAuthRequired && !state.configToken) {
+        setConfigAccess(false);
+        note("Login configurazione richiesto.");
+        return;
+      }
+
+      setConfigAccess(true);
+      try {
+        await loadInstances(slugify(forcedInstanceFromUrl(), ""));
+        note("Pronto.");
+      } catch (err) {
+        if (!handleConfigAuthError(err)) note(err.message, true);
+      }
     }
 
     el.createForm.addEventListener("submit", createInstance);
     el.addBoard.addEventListener("click", addBoard);
-    el.saveBtn.addEventListener("click", () => saveCurrent(false).catch((err) => note(err.message, true)));
+    el.saveBtn.addEventListener("click", () => saveCurrent(false).catch((err) => { if (!handleConfigAuthError(err)) note(err.message, true); }));
     el.publishBtn.addEventListener("click", publishCurrent);
     el.deleteBtn.addEventListener("click", deleteCurrent);
+    el.configLoginBtn.addEventListener("click", configLogin);
+    el.configPass.addEventListener("keydown", (ev) => { if (ev.key === "Enter") configLogin(); });
+    el.configLogout.addEventListener("click", configLogout);
 
-    bootstrap().catch((err) => note(err.message, true));
+    bootstrap().catch((err) => { if (!handleConfigAuthError(err)) note(err.message, true); });
   </script>
 </body>
 </html>

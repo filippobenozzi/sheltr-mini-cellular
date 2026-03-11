@@ -41,6 +41,9 @@ MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip()
 }
 INSTANCE_AUTH_TTL_SEC = max(300, int(os.environ.get("INSTANCE_AUTH_TTL_SEC", "43200")))
 INSTANCE_AUTH_SECRET = (os.environ.get("INSTANCE_AUTH_SECRET") or "").strip() or f"{MQTT_USERNAME}:{MQTT_PASSWORD}:instance-auth"
+CONFIG_AUTH_USERNAME = (os.environ.get("CONFIG_AUTH_USERNAME") or "").strip()
+CONFIG_AUTH_PASSWORD = (os.environ.get("CONFIG_AUTH_PASSWORD") or "").strip()
+CONFIG_AUTH_TTL_SEC = max(300, int(os.environ.get("CONFIG_AUTH_TTL_SEC", "43200")))
 LIGHT_PROFILE_LOOP_INTERVAL_SEC = max(5, int(os.environ.get("LIGHT_PROFILE_LOOP_INTERVAL_SEC", "20")))
 LIGHT_COMMAND_ACTIONS = {"on", "off"}
 LIGHT_PAYLOAD_FORMATS = {
@@ -79,6 +82,7 @@ PROFILE_LOCK = threading.Lock()
 LIGHT_PROFILE_LAST_RUN: dict[str, str] = {}
 PROFILE_LOOP_STARTED = False
 AUTH_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsheltr-instance-auth-v1")
+CONFIG_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsheltr-config-auth-v1")
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -342,8 +346,11 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
     auth_current = current.get("auth") if isinstance(current.get("auth"), dict) else {}
     auth_username = clean_text(auth_in.get("username"), clean_text(auth_current.get("username"), ""))
     auth_hash = clean_text(auth_current.get("passwordHash"), "")
+    clear_password = bool(auth_in.get("clearPassword"))
     password_raw = auth_in.get("password")
-    if isinstance(password_raw, str):
+    if clear_password:
+        auth_hash = ""
+    elif isinstance(password_raw, str):
         password_raw = password_raw.strip()
         if password_raw:
             auth_hash = generate_password_hash(password_raw)
@@ -474,6 +481,55 @@ def instance_publish_payload(instance: dict[str, Any]) -> dict[str, Any]:
         "mqtt": instance.get("mqtt", {}),
         "updatedAt": instance.get("updatedAt"),
     }
+
+
+def config_auth_enabled() -> bool:
+    return bool(CONFIG_AUTH_USERNAME and CONFIG_AUTH_PASSWORD)
+
+
+def config_token_cookie_name() -> str:
+    return "sheltr_config_token"
+
+
+def issue_config_token() -> tuple[str, str]:
+    now_ts = int(time.time())
+    token = CONFIG_TOKEN_SERIALIZER.dumps({"scope": "config", "iat": now_ts})
+    expires_ts = now_ts + CONFIG_AUTH_TTL_SEC
+    return token, datetime.fromtimestamp(expires_ts, tz=timezone.utc).replace(microsecond=0).isoformat()
+
+
+def extract_config_token(body: dict[str, Any] | None = None) -> str:
+    from_header = clean_text(request.headers.get("X-Config-Token"), "")
+    if from_header:
+        return from_header
+    from_query = clean_text(request.args.get("configToken"), "")
+    if from_query:
+        return from_query
+    if isinstance(body, dict):
+        raw = body.get("configToken")
+        if isinstance(raw, str):
+            return raw.strip()
+    from_cookie = clean_text(request.cookies.get(config_token_cookie_name()), "")
+    if from_cookie:
+        return from_cookie
+    return ""
+
+
+def require_config_auth(body: dict[str, Any] | None = None):
+    if not config_auth_enabled():
+        return None
+    token = extract_config_token(body)
+    if not token:
+        return err("Login configurazione richiesto", 401)
+    try:
+        payload = CONFIG_TOKEN_SERIALIZER.loads(token, max_age=CONFIG_AUTH_TTL_SEC)
+    except SignatureExpired:
+        return err("Sessione configurazione scaduta", 401)
+    except BadSignature:
+        return err("Sessione configurazione non valida", 401)
+    if not isinstance(payload, dict) or clean_text(payload.get("scope"), "") != "config":
+        return err("Sessione configurazione non valida", 401)
+    return None
 
 
 def instance_token_cookie_name(instance_id: str) -> str:
@@ -1254,6 +1310,104 @@ def instance_config_page(instance_id: str):
 @app.get("/healthz")
 def healthz():
     return jsonify({"ok": True})
+
+
+@app.get("/api/config/auth")
+def api_config_auth():
+    return jsonify(
+        {
+            "required": config_auth_enabled(),
+            "username": CONFIG_AUTH_USERNAME if config_auth_enabled() else "",
+        }
+    )
+
+
+@app.post("/api/config/auth/login")
+def api_config_auth_login():
+    if not config_auth_enabled():
+        return jsonify({"ok": True, "required": False, "token": "", "expiresAt": None})
+    body = request.get_json(silent=True) or {}
+    username_in = clean_text(body.get("username"), "")
+    password_in = str(body.get("password") or "")
+    if username_in != CONFIG_AUTH_USERNAME or password_in != CONFIG_AUTH_PASSWORD:
+        return err("Credenziali configurazione non valide", 401)
+    token, expires_at = issue_config_token()
+    response = jsonify({"ok": True, "required": True, "token": token, "expiresAt": expires_at})
+    response.set_cookie(
+        config_token_cookie_name(),
+        token,
+        max_age=CONFIG_AUTH_TTL_SEC,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/config/auth/logout")
+def api_config_auth_logout():
+    response = jsonify({"ok": True})
+    response.delete_cookie(config_token_cookie_name(), path="/")
+    return response
+
+
+@app.get("/api/config/meta")
+def api_config_meta():
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
+    return api_meta()
+
+
+@app.get("/api/config/instances")
+def api_config_list_instances():
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
+    return api_list_instances()
+
+
+@app.post("/api/config/instances")
+def api_config_create_instance():
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
+    return api_create_instance()
+
+
+@app.get("/api/config/instances/<instance_id>")
+def api_config_get_instance(instance_id: str):
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
+    return api_get_instance(instance_id)
+
+
+@app.put("/api/config/instances/<instance_id>")
+def api_config_update_instance(instance_id: str):
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
+    return api_update_instance(instance_id)
+
+
+@app.delete("/api/config/instances/<instance_id>")
+def api_config_delete_instance(instance_id: str):
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
+    return api_delete_instance(instance_id)
+
+
+@app.post("/api/config/instances/<instance_id>/publish")
+def api_config_publish_instance(instance_id: str):
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
+    return api_publish_instance(instance_id)
 
 
 @app.get("/api/meta")

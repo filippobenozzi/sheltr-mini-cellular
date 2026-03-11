@@ -41,17 +41,19 @@ MQTT_PASSWORD=filippo1994
 
 1. Crea una nuova istanza DR154 (es. `dr154-villa`).
 2. Apri l'istanza dalla pagina config.
-3. Aggiungi le schede (`light`, `shutter`, `dimmer`, `thermostat`).
-4. Imposta indirizzo, range canali, nome canale e stanza.
-5. Imposta login per istanza (`username` e `password`) nella pagina config.
-6. Salva.
-7. Premi `Pubblica su MQTT` per inviare la configurazione.
-8. Apri il controllo dedicato su `/control/<istanza>`.
-9. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
-10. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
-11. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
-12. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
-13. Su ogni card luce puoi usare `⚙` per impostare il profilo orario.
+3. Se impostato in `.env`, fai login config (`CONFIG_AUTH_USERNAME` / `CONFIG_AUTH_PASSWORD`).
+4. Aggiungi le schede (`light`, `shutter`, `dimmer`, `thermostat`).
+5. Imposta indirizzo, range canali, nome canale e stanza.
+6. Imposta login per istanza (`username` e `password`) nella pagina config.
+7. Salva.
+8. Premi `Pubblica su MQTT` per inviare la configurazione.
+9. Apri il controllo dedicato su `/control/<istanza>`.
+10. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
+11. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
+12. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
+13. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
+14. Su ogni card luce puoi usare `⚙` per impostare il profilo orario.
+15. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
 
 Topic di default per la configurazione:
 
@@ -111,6 +113,10 @@ Per ridurre i comandi persi in rete:
 - sessione login per istanza:
   - `INSTANCE_AUTH_TTL_SEC=43200`
   - `INSTANCE_AUTH_SECRET=...` (consigliato in produzione, stringa lunga casuale)
+- login schermata config (opzionale):
+  - `CONFIG_AUTH_USERNAME=...`
+  - `CONFIG_AUTH_PASSWORD=...`
+  - `CONFIG_AUTH_TTL_SEC=43200`
 
 Nota: le azioni supportate per le luci sono `on` e `off`.
 
