@@ -2281,9 +2281,81 @@ def err(message: str, status: int = 400):
     return jsonify({"error": message}), status
 
 
+def control_manifest_payload(instance_id: str, instance_name: str) -> dict[str, Any]:
+    clean_id = slugify(instance_id, "dr154-1")
+    clean_name = clean_text(instance_name, clean_id)
+    short_name = clean_name[:24] if len(clean_name) > 24 else clean_name
+    control_url = f"/control/{clean_id}"
+    return {
+        "id": control_url,
+        "name": clean_name,
+        "short_name": short_name,
+        "description": "Sheltr Cloud control panel for DR154 devices",
+        "start_url": control_url,
+        "scope": "/control/",
+        "display": "standalone",
+        "background_color": "#191919",
+        "theme_color": "#191919",
+        "icons": [
+            {
+                "src": "/static/icon.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any",
+            },
+            {
+                "src": "/static/logo.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any",
+            },
+        ],
+    }
+
+
 @app.get("/")
 def root():
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.get("/sw.js")
+def service_worker():
+    response = send_from_directory(app.static_folder, "sw.js")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Service-Worker-Allowed"] = "/"
+    return response
+
+
+@app.get("/manifest.webmanifest")
+def manifest_default():
+    payload = control_manifest_payload("dr154-1", "Sheltr Cloud")
+    response = app.response_class(
+        response=json.dumps(payload, ensure_ascii=False),
+        status=200,
+        mimetype="application/manifest+json",
+    )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
+@app.get("/manifest/<instance_id>.webmanifest")
+def manifest_instance(instance_id: str):
+    clean_id = slugify(instance_id, "dr154-1")
+    clean_name = clean_id
+    with STORE_LOCK:
+        store = load_store()
+        instance = find_instance(store, clean_id)
+    if isinstance(instance, dict):
+        clean_id = clean_text(instance.get("id"), clean_id)
+        clean_name = clean_text(instance.get("name"), clean_id)
+    payload = control_manifest_payload(clean_id, clean_name)
+    response = app.response_class(
+        response=json.dumps(payload, ensure_ascii=False),
+        status=200,
+        mimetype="application/manifest+json",
+    )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 
 @app.get("/control")

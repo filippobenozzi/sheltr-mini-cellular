@@ -4,8 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#191919">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>// Sheltr Cloud</title>
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link id="pwaManifest" rel="manifest" href="/manifest.webmanifest">
   <style>
     :root{--bg:#191919;--section:#282828;--fg:#f0efed;--muted:#bcbab6;--bd:#bcbab6;--s1:4px;--s2:8px;--s3:12px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,Monaco,Liberation Mono,monospace}
     *{box-sizing:border-box}
@@ -117,6 +121,7 @@
 <script>
 const $=s=>document.querySelector(s);
 const titleEl=$("#pageTitle"),nowEl=$("#now"),roomsEl=$("#rooms"),msgEl=$("#msg"),lastEl=$("#last");
+const pwaManifestEl=$("#pwaManifest");
 const loginBox=$("#loginBox"),loginUser=$("#loginUser"),loginPass=$("#loginPass"),loginBtn=$("#loginBtn");
 const topEl=$("#top"),refreshBtn=$("#refresh"),allOnBtn=$("#allOn"),allOffBtn=$("#allOff"),logoutBtn=$("#logoutBtn");
 const tpModal=$("#tpModal"),tpTitle=$("#tpTitle"),tpEnabled=$("#tpEnabled"),tpRows=$("#tpRows"),tpAdd=$("#tpAdd"),tpSave=$("#tpSave"),tpClose=$("#tpClose");
@@ -157,6 +162,24 @@ function normSwitchProfile(kind,p){const entries=(Array.isArray(p?.entries)?p.en
 
 function forcedInstanceFromUrl(){const parts=location.pathname.split("/").filter(Boolean);if(parts[0]==="control"&&parts[1])return decodeURIComponent(parts[1]);if(parts[0]==="instance"&&parts[1])return decodeURIComponent(parts[1]);const q=new URLSearchParams(location.search).get("instance");return q||""}
 function tokenKey(instanceId){return `sheltr-token-${instanceId}`}
+function controlUrl(instanceId){return `/control/${encodeURIComponent(instanceId)}`}
+function pwaManifestUrl(instanceId){return `/manifest/${encodeURIComponent(instanceId)}.webmanifest`}
+function applyPwaIdentity(instanceId,instanceName){
+  const slug=slugify(instanceId,"dr154-1");
+  const name=cleanText(instanceName,slug);
+  if(pwaManifestEl)pwaManifestEl.setAttribute("href",pwaManifestUrl(slug));
+  const title=`${name} // Sheltr Cloud`;
+  titleEl.textContent=title;
+  document.title=title;
+}
+function ensureControlUrl(instanceId){
+  const expected=controlUrl(instanceId);
+  if(location.pathname!==expected)history.replaceState({}, "", expected);
+}
+function registerControlPwa(){
+  if(!("serviceWorker" in navigator))return;
+  navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(()=>{});
+}
 
 function setLoginVisible(v){loginBox.classList.toggle("hidden",!v)}
 function setControlVisible(v){topEl.classList.toggle("hidden",!v);logoutBtn.classList.toggle("hidden",!(v&&state.authRequired));if(!v)roomsEl.innerHTML=""}
@@ -337,7 +360,10 @@ async function logout(){
 async function init(){
   const forced=slugify(forcedInstanceFromUrl(),"");
   if(!forced){note("Istanza non specificata. Apri URL /control/<istanza>",true);return}
+  registerControlPwa();
   state.instanceId=forced;
+  applyPwaIdentity(forced,forced);
+  ensureControlUrl(forced);
   tickNow();
   setInterval(tickNow,1000);
   setControlVisible(false);
@@ -349,9 +375,8 @@ async function init(){
     state.instance=res.instance;
     state.instanceId=res.instance.id;
     rebuildProfiles();
-    const title=`${state.instance.name} // Sheltr Cloud`;
-    titleEl.textContent=title;
-    document.title=title;
+    applyPwaIdentity(state.instanceId,state.instance.name);
+    ensureControlUrl(state.instanceId);
     state.authRequired=!!(state.instance?.auth?.passwordConfigured);
     if(state.authRequired){
       state.token="";
