@@ -283,6 +283,8 @@
             <select id="lightPayloadFormat">
               <option value="frame_hex_space">Frame HEX con spazi</option>
               <option value="frame_hex_compact">Frame HEX compatto</option>
+              <option value="frame_hex_space_crlf">Frame HEX con spazi + CRLF</option>
+              <option value="frame_hex_compact_crlf">Frame HEX compatto + CRLF</option>
               <option value="frame_bytes">Frame bytes raw</option>
               <option value="json">JSON</option>
             </select>
@@ -543,7 +545,14 @@
       const savedLightTopic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightCommandTopic(state.current.id));
       el.lightTopicInput.value = savedLightTopic;
       const savedPayloadFormat = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space");
-      el.lightPayloadFormat.value = ["frame_hex_space", "frame_hex_compact", "frame_bytes", "json"].includes(savedPayloadFormat)
+      el.lightPayloadFormat.value = [
+        "frame_hex_space",
+        "frame_hex_compact",
+        "frame_hex_space_crlf",
+        "frame_hex_compact_crlf",
+        "frame_bytes",
+        "json"
+      ].includes(savedPayloadFormat)
         ? savedPayloadFormat
         : "frame_hex_space";
       el.boardsCount.value = String(state.current.boards.length);

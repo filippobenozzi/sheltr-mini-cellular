@@ -34,6 +34,8 @@ services:
       MQTT_USERNAME: ${MQTT_USERNAME:-filippo}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-filippo1994}
       MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC:-dr154}
+      MQTT_CONFIG_QOS: "${MQTT_CONFIG_QOS:-1}"
+      MQTT_COMMAND_QOS: "${MQTT_COMMAND_QOS:-0}"
     volumes:
       - ./web:/data
 

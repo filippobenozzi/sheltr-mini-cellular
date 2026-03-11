@@ -22,7 +22,14 @@ MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "dr154").strip("/") or "dr15
 MQTT_CONFIG_QOS = max(0, min(2, int(os.environ.get("MQTT_CONFIG_QOS", "1"))))
 MQTT_COMMAND_QOS = max(0, min(2, int(os.environ.get("MQTT_COMMAND_QOS", "1"))))
 LIGHT_COMMAND_ACTIONS = {"on", "off", "toggle"}
-LIGHT_PAYLOAD_FORMATS = {"json", "frame_hex_space", "frame_hex_compact", "frame_bytes"}
+LIGHT_PAYLOAD_FORMATS = {
+    "json",
+    "frame_hex_space",
+    "frame_hex_compact",
+    "frame_hex_space_crlf",
+    "frame_hex_compact_crlf",
+    "frame_bytes",
+}
 LIGHT_RELAY_COMMANDS = {
     1: 0x51,
     2: 0x52,
@@ -205,12 +212,27 @@ def mqtt_publish(topic: str, payload: Any, *, qos: int, retain: bool) -> None:
         protocol=mqtt.MQTTv311,
     )
     client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-    client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
-    result = client.publish(topic, raw_payload, qos=qos, retain=retain)
-    result.wait_for_publish(timeout=5)
-    if not result.is_published():
-        raise RuntimeError("Timeout pubblicazione MQTT")
-    client.disconnect()
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        client.loop_start()
+        result = client.publish(topic, raw_payload, qos=qos, retain=retain)
+        if qos > 0:
+            result.wait_for_publish(timeout=5)
+            if not result.is_published():
+                raise RuntimeError("Timeout pubblicazione MQTT")
+        else:
+            rc = getattr(result, "rc", None)
+            if rc not in (0, None):
+                raise RuntimeError(f"Publish MQTT fallita rc={rc}")
+    finally:
+        try:
+            client.loop_stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def get_light_command_topic(instance: dict[str, Any]) -> str:
@@ -276,6 +298,10 @@ def light_payload_for_target(
         return frame, frame_hex_spaced
     if payload_format == "frame_hex_compact":
         return frame_to_hex(frame, compact=True), frame_hex_spaced
+    if payload_format == "frame_hex_space_crlf":
+        return frame_hex_spaced + "\r\n", frame_hex_spaced
+    if payload_format == "frame_hex_compact_crlf":
+        return frame_to_hex(frame, compact=True) + "\r\n", frame_hex_spaced
     return frame_hex_spaced, frame_hex_spaced
 
 
