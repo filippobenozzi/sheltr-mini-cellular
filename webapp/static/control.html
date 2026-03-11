@@ -256,11 +256,47 @@ function collectIds(kind){
   return ids;
 }
 
+function applySentState(sent){
+  if(!Array.isArray(sent)||!Array.isArray(state.status?.rooms))return;
+  const byId=new Map();
+  for(const item of sent){if(item&&item.id)byId.set(String(item.id),item)}
+  for(const room of state.status.rooms){
+    for(const light of (room?.lights||[])){
+      const s=byId.get(String(light?.id||""));
+      if(!s)continue;
+      if(typeof s.isOn==="boolean")light.isOn=s.isOn;
+    }
+    for(const dimmer of (room?.dimmers||[])){
+      const s=byId.get(String(dimmer?.id||""));
+      if(!s)continue;
+      if(Number.isFinite(Number(s.level)))dimmer.level=Math.max(0,Math.min(9,Math.round(Number(s.level))));
+      if(typeof s.isOn==="boolean")dimmer.isOn=s.isOn;
+      else if(Number.isFinite(Number(dimmer.level)))dimmer.isOn=Number(dimmer.level)>0;
+    }
+    for(const shutter of (room?.shutters||[])){
+      const s=byId.get(String(shutter?.id||""));
+      if(!s)continue;
+      if(typeof s.action==="string"&&s.action)shutter.action=s.action;
+    }
+    for(const thermostat of (room?.thermostats||[])){
+      const s=byId.get(String(thermostat?.id||""));
+      if(!s)continue;
+      if(Number.isFinite(Number(s.setpoint)))thermostat.setpoint=Number(s.setpoint);
+      if(typeof s.mode==="string"&&s.mode)thermostat.mode=s.mode;
+      if(typeof s.isOn==="boolean")thermostat.isOn=s.isOn;
+      if(typeof s.isActive==="boolean")thermostat.isActive=s.isActive;
+      if(Number.isFinite(Number(s.temperature)))thermostat.temperature=Number(s.temperature);
+    }
+  }
+}
+
 async function cmd(path,payload,okMessage){
   try{
     const out=await api(path,{method:"POST",body:JSON.stringify(payload)});
     const sent=Array.isArray(out?.sent)?out.sent:[];
     const verified=sent.filter(x=>x&&x.verified).length;
+    applySentState(sent);
+    renderStatus(state.status||{},true);
     note(`${okMessage} (${sent.length} inviati${sent.length?`, confermati ${verified}/${sent.length}`:""}).`);
     await loadStatus(false,true);
     renderStatus(state.status||{},true);

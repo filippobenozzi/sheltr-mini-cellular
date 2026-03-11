@@ -34,6 +34,11 @@ MQTT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("MQTT_RESPONSE_TIMEOUT_MS
 MQTT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("MQTT_RESPONSE_RETRIES", "2"))))
 MQTT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_RETRY_DELAY_MS", "220")))
 MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS", "320")))
+THERMOSTAT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("THERMOSTAT_RESPONSE_TIMEOUT_MS", "4500")))
+THERMOSTAT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("THERMOSTAT_RESPONSE_RETRIES", "3"))))
+THERMOSTAT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_RETRY_DELAY_MS", "400")))
+THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS", "700")))
+THERMOSTAT_COMMAND_FRAME_GAP_MS = max(0, int(os.environ.get("THERMOSTAT_COMMAND_FRAME_GAP_MS", "220")))
 MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip().lower() in {
     "1",
     "true",
@@ -987,6 +992,9 @@ def poll_board_output_mask_via_mqtt(
     response_topic: str,
     payload_format: str,
     address: int,
+    timeout_ms: int | None = None,
+    retries: int | None = None,
+    retry_delay_ms: int | None = None,
 ) -> dict[str, Any]:
     if not response_topic:
         return {"ok": False, "error": "response_topic_non_configurato"}
@@ -997,7 +1005,10 @@ def poll_board_output_mask_via_mqtt(
 
     poll_frame = build_protocol_frame(address, 0x40, [])
     poll_payload = frame_payload_for_format(poll_frame, payload_format)
-    attempts = max(1, MQTT_RESPONSE_RETRIES + 1)
+    effective_timeout_ms = MQTT_RESPONSE_TIMEOUT_MS if timeout_ms is None else max(200, int(timeout_ms))
+    effective_retries = MQTT_RESPONSE_RETRIES if retries is None else max(0, min(5, int(retries)))
+    effective_retry_delay_ms = MQTT_RESPONSE_RETRY_DELAY_MS if retry_delay_ms is None else max(0, int(retry_delay_ms))
+    attempts = max(1, effective_retries + 1)
     outcome: dict[str, Any] = {}
 
     for attempt in range(1, attempts + 1):
@@ -1007,7 +1018,7 @@ def poll_board_output_mask_via_mqtt(
             response_topic=response_topic,
             expected_address=address,
             expected_command=0x40,
-            timeout_ms=MQTT_RESPONSE_TIMEOUT_MS,
+            timeout_ms=effective_timeout_ms,
             qos=MQTT_COMMAND_QOS,
         ) or {}
         matched = outcome.get("matched")
@@ -1022,8 +1033,8 @@ def poll_board_output_mask_via_mqtt(
                     "frameHex": matched.get("hex"),
                     "framesSeen": to_int(outcome.get("framesSeen"), 0),
                 }
-        if attempt < attempts and MQTT_RESPONSE_RETRY_DELAY_MS > 0:
-            time.sleep(MQTT_RESPONSE_RETRY_DELAY_MS / 1000.0)
+        if attempt < attempts and effective_retry_delay_ms > 0:
+            time.sleep(effective_retry_delay_ms / 1000.0)
 
     reason = clean_text(outcome.get("error"), "nessuna_risposta_poll")
     return {"ok": False, "address": address, "error": reason}
@@ -1875,7 +1886,7 @@ def execute_thermostat_targets(
         if not frames_to_send:
             raise ValueError("Nessun comando termostato generato")
 
-        for frame_item in frames_to_send:
+        for frame_idx, frame_item in enumerate(frames_to_send):
             mqtt_publish(
                 effective_topic,
                 frame_item["payload"],
@@ -1884,14 +1895,19 @@ def execute_thermostat_targets(
                 retries=MQTT_COMMAND_RETRIES,
                 retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
             )
+            if frame_idx < (len(frames_to_send) - 1) and THERMOSTAT_COMMAND_FRAME_GAP_MS > 0:
+                time.sleep(THERMOSTAT_COMMAND_FRAME_GAP_MS / 1000.0)
 
-        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
-            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
+        if THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+            time.sleep(THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
         verification = poll_board_output_mask_via_mqtt(
             command_topic=effective_topic,
             response_topic=effective_response_topic,
             payload_format=effective_payload_format,
             address=clamp(to_int(entity.get("address"), 0), 0, 254),
+            timeout_ms=THERMOSTAT_RESPONSE_TIMEOUT_MS,
+            retries=THERMOSTAT_RESPONSE_RETRIES,
+            retry_delay_ms=THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
         )
         verified = bool(verification.get("ok"))
         if must_verify and not verified:
@@ -2515,6 +2531,11 @@ def api_meta():
             "mqttResponseRetries": MQTT_RESPONSE_RETRIES,
             "mqttResponseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
             "mqttResponseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+            "thermostatResponseTimeoutMs": THERMOSTAT_RESPONSE_TIMEOUT_MS,
+            "thermostatResponseRetries": THERMOSTAT_RESPONSE_RETRIES,
+            "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
+            "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+            "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
             "mqttRequireResponse": MQTT_REQUIRE_RESPONSE,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
@@ -2812,6 +2833,11 @@ def api_light_command(instance_id: str):
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
                 "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "thermostatResponseTimeoutMs": THERMOSTAT_RESPONSE_TIMEOUT_MS,
+                "thermostatResponseRetries": THERMOSTAT_RESPONSE_RETRIES,
+                "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
+                "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -2890,10 +2916,11 @@ def api_dimmer_command(instance_id: str):
                 "retries": MQTT_COMMAND_RETRIES,
                 "retryDelayMs": MQTT_COMMAND_RETRY_DELAY_MS,
                 "publishTimeoutSec": MQTT_PUBLISH_TIMEOUT_SEC,
-                "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
-                "responseRetries": MQTT_RESPONSE_RETRIES,
-                "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
-                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "responseTimeoutMs": THERMOSTAT_RESPONSE_TIMEOUT_MS,
+                "responseRetries": THERMOSTAT_RESPONSE_RETRIES,
+                "responseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "commandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
