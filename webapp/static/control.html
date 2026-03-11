@@ -379,6 +379,17 @@ async function init(){
     ensureControlUrl(state.instanceId);
     state.authRequired=!!(state.instance?.auth?.passwordConfigured);
     if(state.authRequired){
+      const savedToken=cleanText(localStorage.getItem(tokenKey(state.instance.id)),"");
+      if(savedToken){
+        state.token=savedToken;
+        const restored=await loadStatus(false,true);
+        if(restored){
+          setLoginVisible(false);
+          setControlVisible(true);
+          note("Sessione ripristinata.");
+          return;
+        }
+      }
       state.token="";
       localStorage.removeItem(tokenKey(state.instance.id));
       loginUser.value="";

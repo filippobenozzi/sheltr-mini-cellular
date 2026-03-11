@@ -30,9 +30,10 @@ MQTT_COMMAND_RETRIES = max(0, min(5, int(os.environ.get("MQTT_COMMAND_RETRIES", 
 MQTT_COMMAND_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_COMMAND_RETRY_DELAY_MS", "180")))
 MQTT_COMMAND_REPEAT_ONOFF = max(1, min(5, int(os.environ.get("MQTT_COMMAND_REPEAT_ONOFF", "2"))))
 MQTT_COMMAND_REPEAT_GAP_MS = max(0, int(os.environ.get("MQTT_COMMAND_REPEAT_GAP_MS", "120")))
-MQTT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("MQTT_RESPONSE_TIMEOUT_MS", "1600")))
-MQTT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("MQTT_RESPONSE_RETRIES", "1"))))
-MQTT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_RETRY_DELAY_MS", "140")))
+MQTT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("MQTT_RESPONSE_TIMEOUT_MS", "2600")))
+MQTT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("MQTT_RESPONSE_RETRIES", "2"))))
+MQTT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_RETRY_DELAY_MS", "220")))
+MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS", "320")))
 MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip().lower() in {
     "1",
     "true",
@@ -1144,6 +1145,8 @@ def execute_light_targets(
         previous_state = lights_state.get(entity["id"]) if isinstance(lights_state.get(entity["id"]), dict) else {}
         prev_on = previous_state.get("isOn") if isinstance(previous_state, dict) else None
         next_on = desired_light_state(action, prev_on if isinstance(prev_on, bool) else None)
+        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
         verification = poll_light_state_via_mqtt(
             command_topic=effective_topic,
             response_topic=effective_response_topic,
@@ -1564,6 +1567,8 @@ def execute_dimmer_targets(
             retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
         )
 
+        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
         verification = poll_board_output_mask_via_mqtt(
             command_topic=effective_topic,
             response_topic=effective_response_topic,
@@ -1677,6 +1682,8 @@ def execute_shutter_targets(
             retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
         )
 
+        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
         verification = poll_board_output_mask_via_mqtt(
             command_topic=effective_topic,
             response_topic=effective_response_topic,
@@ -1878,6 +1885,8 @@ def execute_thermostat_targets(
                 retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
             )
 
+        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
         verification = poll_board_output_mask_via_mqtt(
             command_topic=effective_topic,
             response_topic=effective_response_topic,
@@ -2505,6 +2514,7 @@ def api_meta():
             "mqttResponseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
             "mqttResponseRetries": MQTT_RESPONSE_RETRIES,
             "mqttResponseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+            "mqttResponseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
             "mqttRequireResponse": MQTT_REQUIRE_RESPONSE,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
@@ -2801,6 +2811,7 @@ def api_light_command(instance_id: str):
                 "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -2882,6 +2893,7 @@ def api_dimmer_command(instance_id: str):
                 "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -2951,6 +2963,7 @@ def api_shutter_command(instance_id: str):
                 "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3032,6 +3045,7 @@ def api_thermostat_command(instance_id: str):
                 "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],

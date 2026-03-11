@@ -105,9 +105,10 @@ Per ridurre i comandi persi in rete:
   - `MQTT_COMMAND_REPEAT_ONOFF=2`
   - `MQTT_COMMAND_REPEAT_GAP_MS=120`
 - conferma stato via risposta dispositivo (polling `0x40`):
-  - `MQTT_RESPONSE_TIMEOUT_MS=1600`
-  - `MQTT_RESPONSE_RETRIES=1`
-  - `MQTT_RESPONSE_RETRY_DELAY_MS=140`
+  - `MQTT_RESPONSE_TIMEOUT_MS=2600`
+  - `MQTT_RESPONSE_RETRIES=2`
+  - `MQTT_RESPONSE_RETRY_DELAY_MS=220`
+  - `MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS=320`
   - `MQTT_REQUIRE_RESPONSE=false` (se `true`, il comando fallisce senza conferma)
 - loop profili orari luci:
   - `LIGHT_PROFILE_LOOP_INTERVAL_SEC=20`
