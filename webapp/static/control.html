@@ -343,8 +343,7 @@ async function cmd(path,payload,okMessage){
       message+=`\n`+reasons.join(" | ");
     }
     note(message,unverified.length>0);
-    await loadStatus(false,true);
-    renderStatus(state.status||{},true);
+    setTimeout(()=>{loadStatus(false,true).then(()=>renderStatus(state.status||{},true)).catch(()=>{})},150);
   }catch(err){
     if(!handleAuthError(err))note(err.message,true)
   }

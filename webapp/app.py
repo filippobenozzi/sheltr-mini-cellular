@@ -1164,17 +1164,19 @@ def execute_light_targets(
         previous_state = lights_state.get(entity["id"]) if isinstance(lights_state.get(entity["id"]), dict) else {}
         prev_on = previous_state.get("isOn") if isinstance(previous_state, dict) else None
         next_on = desired_light_state(action, prev_on if isinstance(prev_on, bool) else None)
-        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
-            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
-        verification = poll_light_state_via_mqtt(
-            command_topic=effective_topic,
-            response_topic=effective_response_topic,
-            payload_format=effective_payload_format,
-            address=clamp(to_int(entity.get("address"), 0), 0, 254),
-            channel=clamp(to_int(entity.get("channel"), 1), 1, 8),
-        )
-        if isinstance(verification.get("isOn"), bool):
-            next_on = bool(verification["isOn"])
+        verification: dict[str, Any] = {"verified": True}
+        if must_verify:
+            if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+                time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
+            verification = poll_light_state_via_mqtt(
+                command_topic=effective_topic,
+                response_topic=effective_response_topic,
+                payload_format=effective_payload_format,
+                address=clamp(to_int(entity.get("address"), 0), 0, 254),
+                channel=clamp(to_int(entity.get("channel"), 1), 1, 8),
+            )
+            if isinstance(verification.get("isOn"), bool):
+                next_on = bool(verification["isOn"])
         if must_verify and not bool(verification.get("verified")):
             reason = clean_text(verification.get("reason"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
@@ -1183,7 +1185,7 @@ def execute_light_targets(
         lights_state[entity["id"]] = {
             "isOn": bool(next_on) if next_on is not None else None,
             "updatedAt": state_updated_at,
-            "source": "poll" if bool(verification.get("verified")) else "command",
+            "source": "poll" if must_verify and bool(verification.get("verified")) else "command",
             "action": action,
         }
         item = {"id": entity["id"], "action": action}
@@ -1586,21 +1588,23 @@ def execute_dimmer_targets(
             retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
         )
 
-        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
-            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
-        verification = poll_board_output_mask_via_mqtt(
-            command_topic=effective_topic,
-            response_topic=effective_response_topic,
-            payload_format=effective_payload_format,
-            address=clamp(to_int(entity.get("address"), 0), 0, 254),
-        )
+        verification: dict[str, Any] = {"ok": True}
+        if must_verify:
+            if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+                time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
+            verification = poll_board_output_mask_via_mqtt(
+                command_topic=effective_topic,
+                response_topic=effective_response_topic,
+                payload_format=effective_payload_format,
+                address=clamp(to_int(entity.get("address"), 0), 0, 254),
+            )
         verified = bool(verification.get("ok"))
         if must_verify and not verified:
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
-
-        update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
-        poll_data = verification.get("poll") if isinstance(verification.get("poll"), dict) else {}
+        if must_verify:
+            update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
+        poll_data = verification.get("poll") if must_verify and isinstance(verification.get("poll"), dict) else {}
         final_level = target_level
         if isinstance(poll_data, dict):
             final_level = clamp(to_int(poll_data.get("dimmerLevel"), target_level), DIMMER_MIN_LEVEL, DIMMER_MAX_LEVEL)
@@ -1701,19 +1705,22 @@ def execute_shutter_targets(
             retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
         )
 
-        if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
-            time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
-        verification = poll_board_output_mask_via_mqtt(
-            command_topic=effective_topic,
-            response_topic=effective_response_topic,
-            payload_format=effective_payload_format,
-            address=clamp(to_int(entity.get("address"), 0), 0, 254),
-        )
+        verification: dict[str, Any] = {"ok": True}
+        if must_verify:
+            if MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+                time.sleep(MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
+            verification = poll_board_output_mask_via_mqtt(
+                command_topic=effective_topic,
+                response_topic=effective_response_topic,
+                payload_format=effective_payload_format,
+                address=clamp(to_int(entity.get("address"), 0), 0, 254),
+            )
         verified = bool(verification.get("ok"))
         if must_verify and not verified:
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
-        update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
+        if must_verify:
+            update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
 
         output_mask = clamp(to_int(verification.get("outputMask"), 0), 0, 255)
         bit = 1 << (clamp(to_int(entity.get("channel"), 1), 1, 8) - 1)
@@ -1906,24 +1913,27 @@ def execute_thermostat_targets(
             if frame_idx < (len(frames_to_send) - 1) and THERMOSTAT_COMMAND_FRAME_GAP_MS > 0:
                 time.sleep(THERMOSTAT_COMMAND_FRAME_GAP_MS / 1000.0)
 
-        if THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
-            time.sleep(THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
-        verification = poll_board_output_mask_via_mqtt(
-            command_topic=effective_topic,
-            response_topic=effective_response_topic,
-            payload_format=effective_payload_format,
-            address=clamp(to_int(entity.get("address"), 0), 0, 254),
-            timeout_ms=THERMOSTAT_RESPONSE_TIMEOUT_MS,
-            retries=THERMOSTAT_RESPONSE_RETRIES,
-            retry_delay_ms=THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
-        )
+        verification: dict[str, Any] = {"ok": True}
+        if must_verify:
+            if THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS > 0:
+                time.sleep(THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS / 1000.0)
+            verification = poll_board_output_mask_via_mqtt(
+                command_topic=effective_topic,
+                response_topic=effective_response_topic,
+                payload_format=effective_payload_format,
+                address=clamp(to_int(entity.get("address"), 0), 0, 254),
+                timeout_ms=THERMOSTAT_RESPONSE_TIMEOUT_MS,
+                retries=THERMOSTAT_RESPONSE_RETRIES,
+                retry_delay_ms=THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
+            )
         verified = bool(verification.get("ok"))
         if must_verify and not verified:
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
-        update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
+        if must_verify:
+            update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
 
-        poll_data = verification.get("poll") if isinstance(verification.get("poll"), dict) else {}
+        poll_data = verification.get("poll") if must_verify and isinstance(verification.get("poll"), dict) else {}
         poll_setpoint = None
         if isinstance(poll_data, dict) and "setpoint" in poll_data:
             raw_poll_setpoint = to_int(poll_data.get("setpoint"), -1)
