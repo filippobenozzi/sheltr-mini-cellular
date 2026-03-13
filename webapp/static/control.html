@@ -70,7 +70,6 @@
     .tset{display:flex;margin:auto;gap:6px;align-items:center}
     .tset input[type=range]{width:118px}
     .sval{min-width:48px;font-size:12px;font-weight:700}
-    .wait-note{margin-top:6px;min-height:14px}
     #msg{margin-top:var(--s2);font-size:12px;border:1px solid var(--bd);border-radius:6px;background:var(--section);color:var(--fg);padding:var(--s2);white-space:pre-wrap}
     #tpModal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:var(--s3);z-index:20}
     #tpModal.hidden{display:none}
@@ -330,23 +329,10 @@ function applySentState(sent){
   }
 }
 
-function waitElForButton(btn){
-  const card=btn?.closest?.(".card");
-  if(!card)return null;
-  let el=card.querySelector(".wait-note");
-  if(!el){
-    el=document.createElement("div");
-    el.className="small wait-note";
-    card.appendChild(el);
-  }
-  return el;
-}
-
 async function cmd(path,payload,okMessage,btn){
   const b=btn instanceof HTMLElement?btn:null;
-  const waitEl=b?waitElForButton(b):null;
   if(b)b.disabled=true;
-  if(waitEl)waitEl.textContent="In attesa di risposta...";
+  note("In attesa di risposta...");
   try{
     const out=await api(path,{method:"POST",body:JSON.stringify(payload)});
     const sent=Array.isArray(out?.sent)?out.sent:[];
@@ -364,7 +350,6 @@ async function cmd(path,payload,okMessage,btn){
   }catch(err){
     if(!handleAuthError(err))note(err.message,true)
   }finally{
-    if(waitEl)waitEl.textContent="";
     if(b)b.disabled=false;
   }
 }
