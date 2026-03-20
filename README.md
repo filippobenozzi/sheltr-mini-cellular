@@ -51,7 +51,9 @@ MQTT_PASSWORD=filippo1994
      - `casa-pizero/config`
      - `casa-pizero/cmd`
      - `casa-pizero/pub`
+   - Per `Sheltr Mini` non configuri manualmente le schede nel portale: il profilo e pensato per autoconfigurarsi.
 6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
+   - Questo passaggio vale per `Sheltr 4G / DR154`.
 7. Imposta indirizzo, range canali, nome canale e stanza.
 8. Imposta login per istanza (`username` e `password`) nella pagina config.
 9. Salva.

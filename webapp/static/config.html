@@ -274,6 +274,10 @@
       return cleanText(deviceTypeMeta(deviceType).label, normalizeDeviceType(deviceType));
     }
 
+    function deviceUsesManualBoards(deviceType) {
+      return normalizeDeviceType(deviceType) !== "sheltr_mini";
+    }
+
     function defaultLightTopic(instanceId) {
       return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
     }
@@ -326,6 +330,10 @@
       }, index);
     }
 
+    function defaultDeviceBoards(deviceType) {
+      return deviceUsesManualBoards(deviceType) ? [defaultDeviceBoard(deviceType, 0)] : [];
+    }
+
     function applyDevicePreset(target, deviceType, instanceId = "") {
       if (!target || typeof target !== "object") return target;
       const normalizedType = normalizeDeviceType(deviceType || target.deviceType);
@@ -341,7 +349,7 @@
         lightResponseTopic: mqttTopics.lightResponseTopic,
         lightPayloadFormat: cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")
       };
-      target.boards = [defaultDeviceBoard(normalizedType, 0)];
+      target.boards = defaultDeviceBoards(normalizedType);
       return target;
     }
 
@@ -373,7 +381,7 @@
         `Modulo: ${cleanText(meta.module, "-")}`,
         `Payload default: ${cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")}`,
         type === "sheltr_mini"
-          ? "Per Sheltr Mini i topic vengono derivati dal base topic, es. casa-pizero/cmd."
+          ? "Sheltr Mini usa autoconfigurazione: qui non devi impostare schede manuali."
           : "Compatibile con la configurazione DR154 attuale."
       ];
       el.deviceTypeHint.textContent = bits.filter(Boolean).join(" • ");
@@ -529,7 +537,10 @@
         const m = document.createElement("div");
         m.className = "meta";
         const deviceLabel = cleanText(item.deviceLabel, deviceTypeLabel(item.deviceType));
-        m.textContent = `${item.id} • ${deviceLabel} • ${item.boardsCount} schede${item.authRequired ? " • login" : ""}`;
+        const boardsLabel = deviceUsesManualBoards(item.deviceType)
+          ? `${item.boardsCount} schede`
+          : "autoconfigurazione";
+        m.textContent = `${item.id} • ${deviceLabel} • ${boardsLabel}${item.authRequired ? " • login" : ""}`;
         left.appendChild(b);
         left.appendChild(m);
         const linkRow = document.createElement("div");
@@ -609,13 +620,26 @@
       el.authUsername.value = cleanText(state.current?.auth?.username, "");
       el.authPassword.value = "";
       el.authPasswordClear.checked = false;
-      el.boardsCount.value = String((state.current.boards || []).length);
+      el.boardsCount.value = deviceUsesManualBoards(state.current.deviceType)
+        ? String((state.current.boards || []).length)
+        : "AUTO";
+      el.addBoard.classList.toggle("hidden", !deviceUsesManualBoards(state.current.deviceType));
 
       renderDeviceTypeHint();
       renderBoards();
     }
 
     function renderBoards() {
+      if (!deviceUsesManualBoards(state.current.deviceType)) {
+        state.current.boards = [];
+        el.boardsCount.value = "AUTO";
+        el.boards.innerHTML = "";
+        const p = document.createElement("p");
+        p.className = "small";
+        p.textContent = "Sheltr Mini usa autoconfigurazione dispositivi: nessuna scheda manuale da configurare qui.";
+        el.boards.appendChild(p);
+        return;
+      }
       state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
       el.boardsCount.value = String(state.current.boards.length);
       el.boards.innerHTML = "";
@@ -721,7 +745,9 @@
       const deviceType = normalizeDeviceType(el.deviceType.value);
       const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(currentId, deviceType));
       const derivedTopics = topicsFromBaseTopic(baseTopic, deviceType);
-      state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
+      state.current.boards = deviceUsesManualBoards(deviceType)
+        ? (state.current.boards || []).map((x, i) => normalizeBoard(x, i))
+        : [];
       return {
         id: currentId,
         name: cleanText(el.instanceName.value, state.current.id),
@@ -739,7 +765,7 @@
           password: cleanText(el.authPassword.value, ""),
           clearPassword: !!el.authPasswordClear.checked
         },
-        boards: state.current.boards
+        boards: deviceUsesManualBoards(deviceType) ? state.current.boards : []
       };
     }
 

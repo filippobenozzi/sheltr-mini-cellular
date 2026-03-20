@@ -327,7 +327,10 @@ def build_device_default_mqtt(device_type: Any, instance_id: str) -> dict[str, A
 
 
 def build_device_default_boards(device_type: Any) -> list[dict[str, Any]]:
-    meta = device_type_definition(device_type)
+    normalized = normalize_device_type(device_type)
+    if normalized == "sheltr_mini":
+        return []
+    meta = device_type_definition(normalized)
     default_board = meta.get("defaultBoard") if isinstance(meta.get("defaultBoard"), dict) else {}
     return [normalize_board(default_board, 0)]
 
