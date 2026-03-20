@@ -35,6 +35,9 @@ MQTT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("MQTT_RESPONSE_TIMEOUT_MS
 MQTT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("MQTT_RESPONSE_RETRIES", "2"))))
 MQTT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_RETRY_DELAY_MS", "220")))
 MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS = max(0, int(os.environ.get("MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS", "320")))
+MQTT_AUTOCONFIG_TIMEOUT_MS = max(300, int(os.environ.get("MQTT_AUTOCONFIG_TIMEOUT_MS", "1800")))
+MQTT_AUTOCONFIG_RETRIES = max(0, min(5, int(os.environ.get("MQTT_AUTOCONFIG_RETRIES", "1"))))
+MQTT_AUTOCONFIG_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_AUTOCONFIG_RETRY_DELAY_MS", "450")))
 THERMOSTAT_RESPONSE_TIMEOUT_MS = max(200, int(os.environ.get("THERMOSTAT_RESPONSE_TIMEOUT_MS", "4500")))
 THERMOSTAT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("THERMOSTAT_RESPONSE_RETRIES", "3"))))
 THERMOSTAT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_RETRY_DELAY_MS", "400")))
@@ -335,6 +338,138 @@ def build_device_default_boards(device_type: Any) -> list[dict[str, Any]]:
     return [normalize_board(default_board, 0)]
 
 
+def normalize_imported_kind(value: Any) -> str:
+    raw = clean_text(value, "").lower()
+    aliases = {
+        "light": "light",
+        "switch": "light",
+        "relay": "light",
+        "luce": "light",
+        "luci": "light",
+        "shutter": "shutter",
+        "cover": "shutter",
+        "blind": "shutter",
+        "tapparella": "shutter",
+        "tapparelle": "shutter",
+        "dimmer": "dimmer",
+        "thermostat": "thermostat",
+        "climate": "thermostat",
+        "termostato": "thermostat",
+        "termostato": "thermostat",
+    }
+    return aliases.get(raw, "")
+
+
+def extract_imported_devices(payload: Any, *, depth: int = 0) -> list[dict[str, Any]]:
+    if depth > 4:
+        return []
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("devices", "entities", "items", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    for key in ("payload", "data", "config", "state", "result", "instance"):
+        nested = extract_imported_devices(payload.get(key), depth=depth + 1)
+        if nested:
+            return nested
+    return []
+
+
+def build_boards_from_imported_devices(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, int], list[dict[str, Any]]] = {}
+    for idx, item in enumerate(devices):
+        if not isinstance(item, dict):
+            continue
+        kind = normalize_imported_kind(
+            item.get("kind") or item.get("type") or item.get("domain") or item.get("component") or item.get("deviceType")
+        )
+        if kind not in KIND_META:
+            continue
+        source_id = clean_text(item.get("deviceId") or item.get("sourceId") or item.get("entityId") or item.get("id"), f"{kind}-{idx + 1}")
+        name = clean_text(item.get("name") or item.get("label") or item.get("title"), source_id)
+        room = clean_text(item.get("room") or item.get("roomName") or item.get("area") or item.get("group"), "Senza stanza")
+        board_name_default = KIND_META.get(kind, KIND_META["light"])["label"]
+        board_name = clean_text(item.get("boardName") or item.get("groupName") or item.get("section"), board_name_default)
+        board_id = slugify(item.get("boardId") or item.get("groupId") or board_name, f"{kind}-auto")
+        address = clamp(to_int(item.get("address"), 0), 0, 254)
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else None
+        meta: dict[str, Any] = {}
+        for key in ("capabilities", "traits", "rawType", "category", "subtype"):
+            value = item.get(key)
+            if isinstance(value, (str, int, float, bool, list, dict)):
+                meta[key] = value
+        if isinstance(item.get("meta"), dict):
+            meta.update(item.get("meta"))
+        group_key = (kind, board_id, board_name, address)
+        grouped.setdefault(group_key, []).append(
+            {
+                "sourceId": source_id,
+                "name": name,
+                "room": room,
+                "profile": profile,
+                "meta": meta if meta else None,
+            }
+        )
+
+    boards: list[dict[str, Any]] = []
+    for kind, board_id, board_name, address in sorted(grouped.keys(), key=lambda item: (item[0], item[1], item[3])):
+        entries = grouped[(kind, board_id, board_name, address)]
+        entries.sort(key=lambda item: (str(item.get("room", "")).lower(), str(item.get("name", "")).lower(), str(item.get("sourceId", "")).lower()))
+        max_channels = KIND_META.get(kind, KIND_META["light"])["maxChannels"]
+        for chunk_index, start in enumerate(range(0, len(entries), max_channels)):
+            chunk = entries[start : start + max_channels]
+            chunk_board_id = board_id if chunk_index == 0 else f"{board_id}-{chunk_index + 1}"
+            chunk_board_name = board_name if chunk_index == 0 else f"{board_name} {chunk_index + 1}"
+            channels: list[dict[str, Any]] = []
+            for channel_idx, entry in enumerate(chunk, start=1):
+                channel_data: dict[str, Any] = {
+                    "channel": channel_idx,
+                    "name": clean_text(entry.get("name"), default_channel_name(kind, channel_idx)),
+                    "room": clean_text(entry.get("room"), "Senza stanza"),
+                    "sourceId": clean_text(entry.get("sourceId"), ""),
+                }
+                if entry.get("meta"):
+                    channel_data["meta"] = entry["meta"]
+                profile_kind = profile_kind_for_board(kind)
+                profile_value = entry.get("profile")
+                if profile_kind == "thermostat" and isinstance(profile_value, dict):
+                    channel_data["profile"] = normalize_thermostat_profile(profile_value)
+                elif profile_kind in {"light", "shutter"} and isinstance(profile_value, dict):
+                    channel_data["profile"] = normalize_switch_profile(profile_value, profile_kind)
+                channels.append(channel_data)
+            boards.append(
+                normalize_board(
+                    {
+                        "id": chunk_board_id,
+                        "name": chunk_board_name,
+                        "kind": kind,
+                        "address": address,
+                        "channelStart": 1,
+                        "channelEnd": len(channels),
+                        "channels": channels,
+                    },
+                    len(boards),
+                )
+            )
+    return boards
+
+
+def autoconfig_boards_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        boards_raw = payload.get("boards")
+        if isinstance(boards_raw, list):
+            boards = [normalize_board(item, idx) for idx, item in enumerate(boards_raw[:64]) if isinstance(item, dict)]
+            if boards:
+                return boards
+    devices = extract_imported_devices(payload)
+    if devices:
+        return build_boards_from_imported_devices(devices)
+    return []
+
+
 def split_temperature(value: float) -> tuple[int, int]:
     rounded = round(abs(value), 1)
     integer = int(rounded)
@@ -516,6 +651,12 @@ def normalize_board(raw: Any, index: int) -> dict[str, Any]:
             "name": clean_text(saved.get("name"), default_channel_name(kind, channel)),
             "room": clean_text(saved.get("room"), "Senza stanza"),
         }
+        source_id = clean_text(saved.get("sourceId") or saved.get("deviceId") or saved.get("entityId"), "")
+        if source_id:
+            data["sourceId"] = source_id
+        meta_saved = saved.get("meta")
+        if isinstance(meta_saved, dict):
+            data["meta"] = meta_saved
         profile_kind = profile_kind_for_board(kind)
         if profile_kind == "thermostat":
             data["profile"] = normalize_thermostat_profile(saved.get("profile"))
@@ -743,6 +884,11 @@ def instance_associated_devices(instance: dict[str, Any]) -> list[dict[str, Any]
                 "name": clean_text(channel_data.get("name"), default_channel_name(kind, channel)),
                 "room": clean_text(channel_data.get("room"), "Senza stanza"),
             }
+            source_id = clean_text(channel_data.get("sourceId"), "")
+            if source_id:
+                item["sourceId"] = source_id
+            if isinstance(channel_data.get("meta"), dict):
+                item["meta"] = channel_data.get("meta")
             profile_kind = profile_kind_for_board(kind)
             if profile_kind == "thermostat":
                 item["profile"] = normalize_thermostat_profile(channel_data.get("profile"))
@@ -766,6 +912,58 @@ def instance_publish_payload(instance: dict[str, Any]) -> dict[str, Any]:
         "mqtt": instance.get("mqtt", {}),
         "updatedAt": instance.get("updatedAt"),
     }
+
+
+def instance_has_associated_devices(instance: dict[str, Any]) -> bool:
+    return bool(instance_associated_devices(instance))
+
+
+def instance_needs_autoconfig_sync(instance: dict[str, Any]) -> bool:
+    return instance_device_type(instance) == "sheltr_mini" and not instance_has_associated_devices(instance)
+
+
+def updated_instance_with_autoconfig_boards(instance: dict[str, Any], boards: list[dict[str, Any]]) -> dict[str, Any]:
+    return normalize_instance(
+        {
+            "id": clean_text(instance.get("id"), "dr154-1"),
+            "name": clean_text(instance.get("name"), clean_text(instance.get("id"), "dr154-1")),
+            "deviceType": instance_device_type(instance),
+            "mqtt": instance.get("mqtt", {}),
+            "boards": boards,
+        },
+        fallback_id=clean_text(instance.get("id"), "dr154-1"),
+        current_instance=instance,
+    )
+
+
+def replace_instance_in_store(instance_id: str, instance: dict[str, Any]) -> dict[str, Any] | None:
+    with STORE_LOCK:
+        store = load_store()
+        current = find_instance(store, instance_id)
+        if current is None:
+            return None
+        current_id = clean_text(current.get("id"), slugify(instance_id, "dr154-1"))
+        for idx, item in enumerate(store["instances"]):
+            if clean_text(item.get("id"), "") == current_id:
+                store["instances"][idx] = instance
+                save_store(store)
+                return instance
+    return None
+
+
+def sync_autoconfig_instance_in_store(instance_id: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    with STORE_LOCK:
+        store = load_store()
+        instance = find_instance(store, instance_id)
+    if instance is None:
+        return None, {"ok": False, "error": "Istanza non trovata"}
+    updated, info = autoconfigure_instance_from_mqtt(instance)
+    if not info.get("ok"):
+        return instance, info
+    saved = replace_instance_in_store(clean_text(instance.get("id"), slugify(instance_id, "dr154-1")), updated)
+    if saved is None:
+        return None, {"ok": False, "error": "Istanza non trovata durante il salvataggio autoconfigurazione"}
+    return saved, info
 
 
 def config_auth_enabled() -> bool:
@@ -1170,6 +1368,259 @@ def mqtt_publish_and_wait_frame(
         "framesSeen": len(seen_frames),
         "error": "Timeout risposta dispositivo",
     }
+
+
+def mqtt_wait_for_autoconfig_payload(
+    *,
+    topic: str,
+    timeout_ms: int,
+    qos: int,
+) -> dict[str, Any]:
+    if not topic:
+        return {"ok": False, "error": "topic_non_configurato"}
+
+    subscribed = threading.Event()
+    result_ready = threading.Event()
+    payload_holder: dict[str, Any] = {}
+    error_message: list[str] = []
+
+    def on_subscribe(
+        client: mqtt.Client,
+        _userdata: Any,
+        _mid: int,
+        _granted_qos: list[int],
+        _properties: Any = None,
+    ) -> None:
+        _ = client
+        subscribed.set()
+
+    def on_message(client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+        _ = client
+        text = bytes(msg.payload or b"").decode("utf-8", errors="ignore").strip()
+        if not text:
+            return
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return
+        boards = autoconfig_boards_from_payload(parsed)
+        if not boards:
+            return
+        payload_holder["payload"] = parsed
+        payload_holder["boards"] = boards
+        payload_holder["retain"] = bool(getattr(msg, "retain", False))
+        result_ready.set()
+
+    client_id = f"iotsheltr-autocfg-{os.getpid()}-{int(time.time() * 1000)}"
+    client = mqtt.Client(
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        client_id=client_id,
+        protocol=mqtt.MQTTv311,
+    )
+    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    client.on_message = on_message
+    client.on_subscribe = on_subscribe
+
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        client.loop_start()
+        sub_rc, _ = client.subscribe(topic, qos=min(1, max(0, qos)))
+        if sub_rc not in (0, mqtt.MQTT_ERR_SUCCESS):
+            raise RuntimeError(f"Subscribe MQTT fallita rc={sub_rc}")
+        if not subscribed.wait(timeout=2):
+            raise RuntimeError("Timeout subscribe MQTT su topic autoconfigurazione")
+        result_ready.wait(timeout=max(0.3, timeout_ms / 1000.0))
+    except Exception as exc:  # noqa: BLE001
+        error_message.append(str(exc))
+    finally:
+        try:
+            client.loop_stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if payload_holder.get("boards"):
+        return {
+            "ok": True,
+            "payload": payload_holder.get("payload"),
+            "boards": payload_holder.get("boards"),
+            "retain": bool(payload_holder.get("retain")),
+        }
+    if error_message:
+        return {"ok": False, "error": "; ".join(error_message)}
+    return {"ok": False, "error": "timeout_autoconfigurazione"}
+
+
+def mqtt_publish_and_wait_for_autoconfig_payload(
+    *,
+    publish_topic: str,
+    publish_payload: Any,
+    listen_topics: list[str],
+    timeout_ms: int,
+    publish_qos: int,
+    listen_qos: int,
+    retain: bool,
+    retries: int = 0,
+    retry_delay_ms: int = 0,
+) -> dict[str, Any]:
+    topics: list[str] = []
+    for topic in listen_topics:
+        cleaned = clean_text(topic, "")
+        if cleaned and cleaned not in topics:
+            topics.append(cleaned)
+
+    if not topics:
+        mqtt_publish(
+            publish_topic,
+            publish_payload,
+            qos=publish_qos,
+            retain=retain,
+            retries=retries,
+            retry_delay_ms=retry_delay_ms,
+        )
+        return {"ok": False, "error": "topic_autoconfigurazione_non_configurato", "published": True}
+
+    raw_payload = mqtt_payload_bytes(publish_payload)
+    attempts = max(1, retries + 1)
+    last_error = "timeout_autoconfigurazione"
+
+    for attempt in range(1, attempts + 1):
+        subscribed = threading.Event()
+        result_ready = threading.Event()
+        payload_holder: dict[str, Any] = {}
+
+        def on_subscribe(
+            client: mqtt.Client,
+            _userdata: Any,
+            _mid: int,
+            _granted_qos: list[int],
+            _properties: Any = None,
+        ) -> None:
+            _ = client
+            subscribed.set()
+
+        def on_message(client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+            _ = client
+            text = bytes(msg.payload or b"").decode("utf-8", errors="ignore").strip()
+            if not text:
+                return
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return
+            boards = autoconfig_boards_from_payload(parsed)
+            if not boards:
+                return
+            payload_holder["payload"] = parsed
+            payload_holder["boards"] = boards
+            payload_holder["topic"] = clean_text(getattr(msg, "topic", ""), "")
+            payload_holder["retain"] = bool(getattr(msg, "retain", False))
+            result_ready.set()
+
+        client_id = f"iotsheltr-autocfg-pub-{os.getpid()}-{int(time.time() * 1000)}-{attempt}"
+        client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=client_id,
+            protocol=mqtt.MQTTv311,
+        )
+        client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+        client.on_message = on_message
+        client.on_subscribe = on_subscribe
+
+        try:
+            client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+            client.loop_start()
+            sub_rc, _ = client.subscribe([(topic, min(1, max(0, listen_qos))) for topic in topics])
+            if sub_rc not in (0, mqtt.MQTT_ERR_SUCCESS):
+                raise RuntimeError(f"Subscribe MQTT fallita rc={sub_rc}")
+            subscribed.wait(timeout=1.0)
+            pub_info = client.publish(publish_topic, raw_payload, qos=publish_qos, retain=retain)
+            if publish_qos > 0:
+                pub_info.wait_for_publish(timeout=MQTT_PUBLISH_TIMEOUT_SEC)
+                if not pub_info.is_published():
+                    raise RuntimeError("Timeout pubblicazione MQTT")
+            elif getattr(pub_info, "rc", None) not in (0, None):
+                raise RuntimeError(f"Publish MQTT fallita rc={getattr(pub_info, 'rc', None)}")
+            result_ready.wait(timeout=max(0.3, timeout_ms / 1000.0))
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            if attempt >= attempts:
+                raise RuntimeError(f"Publish MQTT fallita dopo {attempts} tentativi: {last_error}") from exc
+        finally:
+            try:
+                client.loop_stop()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if payload_holder.get("boards"):
+            return {
+                "ok": True,
+                "payload": payload_holder.get("payload"),
+                "boards": payload_holder.get("boards"),
+                "topic": payload_holder.get("topic"),
+                "retain": bool(payload_holder.get("retain")),
+                "attempt": attempt,
+                "published": True,
+            }
+
+        last_error = "timeout_autoconfigurazione"
+        if attempt < attempts and retry_delay_ms > 0:
+            time.sleep(retry_delay_ms / 1000.0)
+
+    return {"ok": False, "error": last_error, "published": True}
+
+
+def get_autoconfig_topics(instance: dict[str, Any]) -> list[str]:
+    topics = [
+        get_light_response_topic(instance),
+        get_config_publish_topic(instance),
+    ]
+    out: list[str] = []
+    for topic in topics:
+        cleaned = clean_text(topic, "")
+        if cleaned and cleaned not in out:
+            out.append(cleaned)
+    return out
+
+
+def autoconfigure_instance_from_mqtt(instance: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if instance_device_type(instance) != "sheltr_mini":
+        return instance, {"ok": False, "skipped": True, "error": "autoconfigurazione disponibile solo per Sheltr Mini"}
+
+    attempts = max(1, MQTT_AUTOCONFIG_RETRIES + 1)
+    topics = get_autoconfig_topics(instance)
+    last_error = "nessun payload dispositivi ricevuto"
+    last_topic = ""
+    boards: list[dict[str, Any]] = []
+
+    for attempt in range(1, attempts + 1):
+        for topic in topics:
+            outcome = mqtt_wait_for_autoconfig_payload(topic=topic, timeout_ms=MQTT_AUTOCONFIG_TIMEOUT_MS, qos=MQTT_CONFIG_QOS)
+            if outcome.get("ok") and isinstance(outcome.get("boards"), list):
+                boards = [normalize_board(item, idx) for idx, item in enumerate(outcome["boards"]) if isinstance(item, dict)]
+                if boards:
+                    updated = updated_instance_with_autoconfig_boards(instance, boards)
+                    return updated, {
+                        "ok": True,
+                        "topic": topic,
+                        "attempt": attempt,
+                        "boardsCount": len(boards),
+                        "devicesCount": len(instance_associated_devices(updated)),
+                        "retain": bool(outcome.get("retain")),
+                    }
+            last_topic = topic
+            last_error = clean_text(outcome.get("error"), last_error)
+        if attempt < attempts and MQTT_AUTOCONFIG_RETRY_DELAY_MS > 0:
+            time.sleep(MQTT_AUTOCONFIG_RETRY_DELAY_MS / 1000.0)
+
+    return instance, {"ok": False, "topic": last_topic, "error": last_error}
 
 
 def poll_light_state_via_mqtt(
@@ -1611,6 +2062,7 @@ def light_payload_for_target(
                 "type": "light_command",
                 "instanceId": instance_id,
                 "lightId": target["id"],
+                "deviceId": clean_text(target.get("sourceId"), target["id"]),
                 "boardId": target["boardId"],
                 "address": target["address"],
                 "channel": target["channel"],
@@ -1653,18 +2105,22 @@ def entities_by_kind(instance: dict[str, Any], kind: str) -> list[dict[str, Any]
                 continue
             channel = clamp(to_int(channel_data.get("channel"), -1), 1, max_channels)
             entity_id = f"{board_id}-c{channel}"
-            entities.append(
-                {
-                    "id": entity_id,
-                    "boardId": board_id,
-                    "boardName": board_name,
-                    "address": address,
-                    "channel": channel,
-                    "kind": kind,
-                    "name": clean_text(channel_data.get("name"), default_channel_name(kind, channel)),
-                    "room": clean_text(channel_data.get("room"), "Senza stanza"),
-                }
-            )
+            item = {
+                "id": entity_id,
+                "boardId": board_id,
+                "boardName": board_name,
+                "address": address,
+                "channel": channel,
+                "kind": kind,
+                "name": clean_text(channel_data.get("name"), default_channel_name(kind, channel)),
+                "room": clean_text(channel_data.get("room"), "Senza stanza"),
+            }
+            source_id = clean_text(channel_data.get("sourceId"), "")
+            if source_id:
+                item["sourceId"] = source_id
+            if isinstance(channel_data.get("meta"), dict):
+                item["meta"] = channel_data.get("meta")
+            entities.append(item)
     entities.sort(key=lambda item: (str(item.get("room", "")).lower(), str(item.get("name", "")).lower()))
     return entities
 
@@ -1800,6 +2256,7 @@ def execute_dimmer_targets(
                 "type": "dimmer_command",
                 "instanceId": instance_id,
                 "dimmerId": entity["id"],
+                "deviceId": clean_text(entity.get("sourceId"), entity["id"]),
                 "boardId": entity["boardId"],
                 "address": entity["address"],
                 "channel": entity["channel"],
@@ -1918,6 +2375,7 @@ def execute_shutter_targets(
                 "type": "shutter_command",
                 "instanceId": instance_id,
                 "shutterId": entity["id"],
+                "deviceId": clean_text(entity.get("sourceId"), entity["id"]),
                 "boardId": entity["boardId"],
                 "address": entity["address"],
                 "channel": entity["channel"],
@@ -2070,6 +2528,7 @@ def execute_thermostat_targets(
                     "type": "thermostat_mode_command",
                     "instanceId": instance_id,
                     "thermostatId": entity["id"],
+                    "deviceId": clean_text(entity.get("sourceId"), entity["id"]),
                     "mode": requested_mode,
                     "address": entity["address"],
                     "channel": entity["channel"],
@@ -2095,6 +2554,7 @@ def execute_thermostat_targets(
                     "type": "thermostat_power_command",
                     "instanceId": instance_id,
                     "thermostatId": entity["id"],
+                    "deviceId": clean_text(entity.get("sourceId"), entity["id"]),
                     "power": "off",
                     "address": entity["address"],
                     "channel": entity["channel"],
@@ -2117,6 +2577,7 @@ def execute_thermostat_targets(
                     "type": "thermostat_setpoint_command",
                     "instanceId": instance_id,
                     "thermostatId": entity["id"],
+                    "deviceId": clean_text(entity.get("sourceId"), entity["id"]),
                     "setpoint": next_setpoint,
                     "power": "on",
                     "address": entity["address"],
@@ -2984,12 +3445,59 @@ def api_publish_instance(instance_id: str):
     if not topic:
         return err("Topic MQTT non valido", 400)
 
+    autoconfig: dict[str, Any] | None = None
     try:
-        mqtt_publish(topic, instance_publish_payload(instance), qos=MQTT_CONFIG_QOS, retain=True, retries=1, retry_delay_ms=200)
+        payload = instance_publish_payload(instance)
+        if instance_device_type(instance) == "sheltr_mini":
+            outcome = mqtt_publish_and_wait_for_autoconfig_payload(
+                publish_topic=topic,
+                publish_payload=payload,
+                listen_topics=get_autoconfig_topics(instance),
+                timeout_ms=MQTT_AUTOCONFIG_TIMEOUT_MS,
+                publish_qos=MQTT_CONFIG_QOS,
+                listen_qos=MQTT_CONFIG_QOS,
+                retain=True,
+                retries=1,
+                retry_delay_ms=200,
+            )
+            if outcome.get("ok") and isinstance(outcome.get("boards"), list):
+                boards = [normalize_board(item, idx) for idx, item in enumerate(outcome["boards"]) if isinstance(item, dict)]
+                if boards:
+                    updated = updated_instance_with_autoconfig_boards(instance, boards)
+                    saved = replace_instance_in_store(instance_id_real, updated)
+                    if saved is not None:
+                        instance = saved
+                    else:
+                        instance = updated
+                    autoconfig = {
+                        "ok": True,
+                        "topic": clean_text(outcome.get("topic"), ""),
+                        "attempt": to_int(outcome.get("attempt"), 1),
+                        "boardsCount": len(boards),
+                        "devicesCount": len(instance_associated_devices(instance)),
+                        "retain": bool(outcome.get("retain")),
+                    }
+            else:
+                autoconfig = {
+                    "ok": False,
+                    "topic": clean_text(outcome.get("topic"), ""),
+                    "error": clean_text(outcome.get("error"), "timeout_autoconfigurazione"),
+                }
+        else:
+            mqtt_publish(topic, payload, qos=MQTT_CONFIG_QOS, retain=True, retries=1, retry_delay_ms=200)
     except Exception as exc:  # noqa: BLE001
         return err(f"Errore pubblicazione MQTT: {exc}", 502)
 
-    return jsonify({"ok": True, "topic": topic, "qos": MQTT_CONFIG_QOS, "retain": True})
+    response = {
+        "ok": True,
+        "topic": topic,
+        "qos": MQTT_CONFIG_QOS,
+        "retain": True,
+        "instance": instance_public(instance),
+    }
+    if isinstance(autoconfig, dict):
+        response["autoconfig"] = autoconfig
+    return jsonify(response)
 
 
 @app.get("/api/instances/<instance_id>/lights")
@@ -3003,6 +3511,12 @@ def api_list_lights(instance_id: str):
     auth_error = require_instance_auth(instance, instance_id_real)
     if auth_error is not None:
         return auth_error
+
+    autoconfig: dict[str, Any] | None = None
+    if instance_needs_autoconfig_sync(instance):
+        synced, autoconfig = sync_autoconfig_instance_in_store(instance_id_real)
+        if synced is not None:
+            instance = synced
 
     refresh = clean_text(request.args.get("refresh"), "0") in {"1", "true", "yes", "on"}
     status = build_instance_status(instance_id_real, instance, refresh=refresh)
@@ -3022,6 +3536,7 @@ def api_list_lights(instance_id: str):
             "payloadFormat": status.get("payloadFormat"),
             "refreshErrors": status.get("refreshErrors", []),
             "lights": lights,
+            "autoconfig": autoconfig,
         }
     )
 
@@ -3038,9 +3553,18 @@ def api_instance_status(instance_id: str):
     if auth_error is not None:
         return auth_error
 
+    autoconfig: dict[str, Any] | None = None
+    if instance_needs_autoconfig_sync(instance):
+        synced, autoconfig = sync_autoconfig_instance_in_store(instance_id_real)
+        if synced is not None:
+            instance = synced
+
     refresh = clean_text(request.args.get("refresh"), "0") in {"1", "true", "yes", "on"}
     try:
-        return jsonify(build_instance_status(instance_id_real, instance, refresh=refresh))
+        response = build_instance_status(instance_id_real, instance, refresh=refresh)
+        if isinstance(autoconfig, dict):
+            response["autoconfig"] = autoconfig
+        return jsonify(response)
     except Exception as exc:  # noqa: BLE001
         return err(f"Errore recupero stato: {exc}", 502)
 

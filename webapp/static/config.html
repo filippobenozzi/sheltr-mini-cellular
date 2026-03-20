@@ -278,6 +278,18 @@
       return normalizeDeviceType(deviceType) !== "sheltr_mini";
     }
 
+    function associatedDevicesCount(instance) {
+      if (!instance || !Array.isArray(instance.boards)) return 0;
+      let count = 0;
+      for (const board of instance.boards) {
+        if (!board || typeof board !== "object" || !Array.isArray(board.channels)) continue;
+        for (const channel of board.channels) {
+          if (channel && typeof channel === "object") count += 1;
+        }
+      }
+      return count;
+    }
+
     function defaultLightTopic(instanceId) {
       return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
     }
@@ -622,7 +634,7 @@
       el.authPasswordClear.checked = false;
       el.boardsCount.value = deviceUsesManualBoards(state.current.deviceType)
         ? String((state.current.boards || []).length)
-        : "AUTO";
+        : (associatedDevicesCount(state.current) ? `AUTO (${associatedDevicesCount(state.current)} dispositivi)` : "AUTO");
       el.addBoard.classList.toggle("hidden", !deviceUsesManualBoards(state.current.deviceType));
 
       renderDeviceTypeHint();
@@ -631,12 +643,14 @@
 
     function renderBoards() {
       if (!deviceUsesManualBoards(state.current.deviceType)) {
-        state.current.boards = [];
-        el.boardsCount.value = "AUTO";
+        const devicesCount = associatedDevicesCount(state.current);
+        el.boardsCount.value = devicesCount ? `AUTO (${devicesCount} dispositivi)` : "AUTO";
         el.boards.innerHTML = "";
         const p = document.createElement("p");
         p.className = "small";
-        p.textContent = "Sheltr Mini usa autoconfigurazione dispositivi: nessuna scheda manuale da configurare qui.";
+        p.textContent = devicesCount
+          ? `Sheltr Mini usa autoconfigurazione dispositivi: rilevati ${devicesCount} dispositivi associati dal modulo.`
+          : "Sheltr Mini usa autoconfigurazione dispositivi: nessuna scheda manuale da configurare qui. Pubblica la configurazione e attendi la risposta del modulo.";
         el.boards.appendChild(p);
         return;
       }
@@ -745,9 +759,12 @@
       const deviceType = normalizeDeviceType(el.deviceType.value);
       const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(currentId, deviceType));
       const derivedTopics = topicsFromBaseTopic(baseTopic, deviceType);
-      state.current.boards = deviceUsesManualBoards(deviceType)
-        ? (state.current.boards || []).map((x, i) => normalizeBoard(x, i))
+      const preservedBoards = Array.isArray(state.current.boards)
+        ? state.current.boards.filter((item) => item && typeof item === "object")
         : [];
+      state.current.boards = deviceUsesManualBoards(deviceType)
+        ? preservedBoards.map((x, i) => normalizeBoard(x, i))
+        : preservedBoards;
       return {
         id: currentId,
         name: cleanText(el.instanceName.value, state.current.id),
@@ -765,7 +782,7 @@
           password: cleanText(el.authPassword.value, ""),
           clearPassword: !!el.authPasswordClear.checked
         },
-        boards: deviceUsesManualBoards(deviceType) ? state.current.boards : []
+        boards: state.current.boards
       };
     }
 
@@ -840,6 +857,23 @@
           method: "POST",
           body: JSON.stringify({})
         });
+        if (res.instance && typeof res.instance === "object") {
+          state.current = res.instance;
+          state.currentId = res.instance.id;
+          renderInstances();
+          renderEditor();
+          await loadInstances(state.current.id);
+        }
+        const autoconfig = res.autoconfig && typeof res.autoconfig === "object" ? res.autoconfig : null;
+        if (autoconfig && autoconfig.ok) {
+          note(`Configurazione pubblicata su '${res.topic}'. Autoconfigurazione completata: ${autoconfig.devicesCount || 0} dispositivi rilevati.`);
+          return;
+        }
+        if (normalizeDeviceType(saved.deviceType) === "sheltr_mini") {
+          const reason = cleanText(autoconfig?.error, "nessun payload dispositivi ricevuto");
+          note(`Configurazione pubblicata su '${res.topic}', ma l'autoconfigurazione non ha restituito dispositivi: ${reason}.`, true);
+          return;
+        }
         note(`Configurazione pubblicata su '${res.topic}'.`);
       } catch (err) {
         if (handleConfigAuthError(err)) return;
