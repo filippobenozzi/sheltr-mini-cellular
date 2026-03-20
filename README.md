@@ -46,6 +46,11 @@ MQTT_PASSWORD=filippo1994
    - `Sheltr 4G / DR154`: profilo storico con configurazione attuale e payload `frame_*`.
    - `Sheltr Mini`: profilo Sheltr Cloud con payload `json`.
 5. Il portale applica automaticamente il preset iniziale di topic, payload e scheda associata.
+   - Per `Sheltr Mini` imposta il `Base topic MQTT` del nodo, ad esempio `casa-pizero`.
+   - Da quel valore il portale deriva in automatico:
+     - `casa-pizero/config`
+     - `casa-pizero/cmd`
+     - `casa-pizero/pub`
 6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
 7. Imposta indirizzo, range canali, nome canale e stanza.
 8. Imposta login per istanza (`username` e `password`) nella pagina config.
@@ -73,7 +78,7 @@ Il payload include anche:
 - `device`: metadati del profilo dispositivo
 - `devices`: elenco piatto dei dispositivi/canali associati pubblicati
 
-Topic default comandi luci:
+Topic default comandi dispositivo (`Sheltr 4G / DR154`):
 
 ```text
 dr154/<istanza>/cmd/light
@@ -89,6 +94,12 @@ Configurazione DR154 consigliata:
 
 - `Subscriber topic` (DR154): `dr154/<istanza>/cmd/light`
 - `Publish topic` (DR154): `dr154/<istanza>/pub/light`
+
+Per `Sheltr Mini` con `Base topic MQTT = casa-pizero`:
+
+- `Topic configurazione`: `casa-pizero/config`
+- `Topic comandi dispositivo`: `casa-pizero/cmd`
+- `Topic risposta dispositivo`: `casa-pizero/pub`
 
 Nota: non usare la slash iniziale (`/`).  
 `dr154/casa-demo/cmd/light` e `/dr154/casa-demo/cmd/light` sono due topic diversi.

@@ -99,8 +99,10 @@
               <option value="sheltr_4g">Sheltr 4G / DR154</option>
             </select>
           </label>
-          <label>Topic comandi luci<input id="lightTopicInput"></label>
-          <label>Topic risposta dispositivo<input id="lightResponseTopicInput" placeholder="es. dr154/casa-demo/pub/light"></label>
+          <label>Base topic MQTT<input id="baseTopicInput" placeholder="es. casa-pizero"></label>
+          <label>Topic configurazione<input id="configTopicInput" placeholder="es. casa-pizero/config"></label>
+          <label>Topic comandi dispositivo<input id="lightTopicInput"></label>
+          <label>Topic risposta dispositivo<input id="lightResponseTopicInput" placeholder="es. casa-pizero/pub oppure dr154/casa-demo/pub/light"></label>
           <label>Formato payload
             <select id="lightPayloadFormat">
               <option value="frame_hex_space">Frame HEX con spazi</option>
@@ -197,6 +199,8 @@
       instanceName: document.getElementById("instanceName"),
       deviceType: document.getElementById("deviceType"),
       deviceTypeHint: document.getElementById("deviceTypeHint"),
+      baseTopicInput: document.getElementById("baseTopicInput"),
+      configTopicInput: document.getElementById("configTopicInput"),
       lightTopicInput: document.getElementById("lightTopicInput"),
       lightResponseTopicInput: document.getElementById("lightResponseTopicInput"),
       lightPayloadFormat: document.getElementById("lightPayloadFormat"),
@@ -230,6 +234,11 @@
     function cleanText(value, fallback = "") {
       const txt = String(value ?? "").trim();
       return txt || fallback;
+    }
+
+    function cleanTopicPath(value, fallback = "") {
+      const txt = cleanText(value, fallback);
+      return txt ? txt.replace(/^\/+|\/+$/g, "") : fallback;
     }
 
     function slugify(value, fallback) {
@@ -273,8 +282,35 @@
       return `${state.mqttBaseTopic}/${instanceId}/pub/light`;
     }
 
+    function defaultConfigTopic(instanceId) {
+      return `${state.mqttBaseTopic}/${instanceId}/config`;
+    }
+
+    function defaultDeviceBaseTopic(instanceId, deviceType) {
+      const normalized = normalizeDeviceType(deviceType);
+      return normalized === "sheltr_mini"
+        ? cleanTopicPath(instanceId, "sheltr-mini")
+        : cleanTopicPath(`${state.mqttBaseTopic}/${instanceId}`, defaultConfigTopic(instanceId).replace(/\/config$/, ""));
+    }
+
+    function topicsFromBaseTopic(baseTopic, deviceType = DEFAULT_DEVICE_TYPE) {
+      const base = cleanTopicPath(baseTopic, "");
+      const normalized = normalizeDeviceType(deviceType);
+      if (!base) {
+        return { baseTopic: "", configTopic: "", lightCommandTopic: "", lightResponseTopic: "" };
+      }
+      const commandSuffix = normalized === "sheltr_mini" ? "cmd" : "cmd/light";
+      const responseSuffix = normalized === "sheltr_mini" ? "pub" : "pub/light";
+      return {
+        baseTopic: base,
+        configTopic: `${base}/config`,
+        lightCommandTopic: `${base}/${commandSuffix}`,
+        lightResponseTopic: `${base}/${responseSuffix}`
+      };
+    }
+
     function defaultLightResponseTopicForDevice(instanceId, deviceType) {
-      return normalizeDeviceType(deviceType) === "sheltr_mini" ? "" : defaultLightResponseTopic(instanceId);
+      return topicsFromBaseTopic(defaultDeviceBaseTopic(instanceId, deviceType), deviceType).lightResponseTopic || defaultLightResponseTopic(instanceId);
     }
 
     function defaultDeviceBoard(deviceType, index = 0) {
@@ -295,15 +331,30 @@
       const normalizedType = normalizeDeviceType(deviceType || target.deviceType);
       const resolvedId = slugify(instanceId || target.id || "dr154-1", "dr154-1");
       const meta = deviceTypeMeta(normalizedType);
+      const mqttTopics = topicsFromBaseTopic(defaultDeviceBaseTopic(resolvedId, normalizedType), normalizedType);
       target.deviceType = normalizedType;
       target.mqtt = {
         ...(target.mqtt && typeof target.mqtt === "object" ? target.mqtt : {}),
-        lightCommandTopic: defaultLightTopic(resolvedId),
-        lightResponseTopic: defaultLightResponseTopicForDevice(resolvedId, normalizedType),
+        baseTopic: mqttTopics.baseTopic,
+        configTopic: mqttTopics.configTopic,
+        lightCommandTopic: mqttTopics.lightCommandTopic,
+        lightResponseTopic: mqttTopics.lightResponseTopic,
         lightPayloadFormat: cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")
       };
       target.boards = [defaultDeviceBoard(normalizedType, 0)];
       return target;
+    }
+
+    function applyBaseTopicDerivedFields() {
+      const deviceType = normalizeDeviceType(el.deviceType.value || state.current?.deviceType || state.defaultDeviceType);
+      const instanceId = slugify(el.instanceId.value || state.current?.id || "dr154-1", "dr154-1");
+      const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(instanceId, deviceType));
+      const topics = topicsFromBaseTopic(baseTopic, deviceType);
+      el.baseTopicInput.value = topics.baseTopic;
+      el.configTopicInput.value = topics.configTopic;
+      el.lightTopicInput.value = topics.lightCommandTopic;
+      el.lightResponseTopicInput.value = topics.lightResponseTopic;
+      renderDeviceTypeHint();
     }
 
     function renderDeviceTypeHint() {
@@ -313,12 +364,16 @@
       }
       const type = normalizeDeviceType(el.deviceType.value);
       const meta = deviceTypeMeta(type);
+      const instanceId = slugify(el.instanceId.value || state.current?.id || "dr154-1", "dr154-1");
+      const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(instanceId, type));
       const bits = [
         cleanText(meta.description, ""),
+        `Base topic: ${baseTopic || "-"}`,
+        `Config: ${topicsFromBaseTopic(baseTopic, type).configTopic || "-"}`,
         `Modulo: ${cleanText(meta.module, "-")}`,
         `Payload default: ${cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")}`,
         type === "sheltr_mini"
-          ? "Topic risposta frame non impostato di default."
+          ? "Per Sheltr Mini i topic vengono derivati dal base topic, es. casa-pizero/cmd."
           : "Compatibile con la configurazione DR154 attuale."
       ];
       el.deviceTypeHint.textContent = bits.filter(Boolean).join(" • ");
@@ -533,9 +588,23 @@
       el.instanceId.value = cleanText(state.current.id, "");
       el.instanceName.value = cleanText(state.current.name, state.current.id);
       el.deviceType.value = normalizeDeviceType(state.current.deviceType);
+      el.baseTopicInput.value = cleanTopicPath(
+        state.current?.mqtt?.baseTopic,
+        defaultDeviceBaseTopic(state.current.id, state.current.deviceType)
+      );
+      el.configTopicInput.value = cleanText(
+        state.current?.mqtt?.configTopic,
+        topicsFromBaseTopic(el.baseTopicInput.value, state.current.deviceType).configTopic || defaultConfigTopic(state.current.id)
+      );
       el.protocolVersion.value = state.current.protocolVersion || "1.6";
-      el.lightTopicInput.value = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
-      el.lightResponseTopicInput.value = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopicForDevice(state.current.id, state.current.deviceType));
+      el.lightTopicInput.value = cleanText(
+        state.current?.mqtt?.lightCommandTopic,
+        topicsFromBaseTopic(el.baseTopicInput.value, state.current.deviceType).lightCommandTopic || defaultLightTopic(state.current.id)
+      );
+      el.lightResponseTopicInput.value = cleanText(
+        state.current?.mqtt?.lightResponseTopic,
+        topicsFromBaseTopic(el.baseTopicInput.value, state.current.deviceType).lightResponseTopic || defaultLightResponseTopicForDevice(state.current.id, state.current.deviceType)
+      );
       el.lightPayloadFormat.value = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
       el.authUsername.value = cleanText(state.current?.auth?.username, "");
       el.authPassword.value = "";
@@ -649,15 +718,20 @@
     function currentPayload() {
       if (!state.current) return null;
       const currentId = slugify(el.instanceId.value, state.current.id);
+      const deviceType = normalizeDeviceType(el.deviceType.value);
+      const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(currentId, deviceType));
+      const derivedTopics = topicsFromBaseTopic(baseTopic, deviceType);
       state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
       return {
         id: currentId,
         name: cleanText(el.instanceName.value, state.current.id),
-        deviceType: normalizeDeviceType(el.deviceType.value),
+        deviceType,
         protocolVersion: "1.6",
         mqtt: {
-          lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(currentId)),
-          lightResponseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopicForDevice(currentId, el.deviceType.value)),
+          baseTopic,
+          configTopic: cleanText(el.configTopicInput.value, derivedTopics.configTopic),
+          lightCommandTopic: cleanText(el.lightTopicInput.value, derivedTopics.lightCommandTopic || defaultLightTopic(currentId)),
+          lightResponseTopic: cleanText(el.lightResponseTopicInput.value, derivedTopics.lightResponseTopic || defaultLightResponseTopicForDevice(currentId, deviceType)),
           lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
         },
         auth: {
@@ -845,6 +919,9 @@
     }
 
     el.createForm.addEventListener("submit", createInstance);
+    el.baseTopicInput.addEventListener("change", applyBaseTopicDerivedFields);
+    el.baseTopicInput.addEventListener("input", renderDeviceTypeHint);
+    el.instanceId.addEventListener("input", renderDeviceTypeHint);
     el.deviceType.addEventListener("change", () => {
       if (!state.current) return;
       const previousType = normalizeDeviceType(state.current.deviceType);

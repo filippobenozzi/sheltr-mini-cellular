@@ -265,13 +265,63 @@ def device_types_public_meta() -> dict[str, Any]:
     return out
 
 
+def clean_topic_path(value: Any, fallback: str = "") -> str:
+    text = clean_text(value, fallback).strip()
+    return text.strip("/") if text else fallback
+
+
+def default_device_base_topic(device_type: Any, instance_id: str) -> str:
+    normalized = normalize_device_type(device_type)
+    if normalized == "sheltr_mini":
+        return clean_topic_path(instance_id, "sheltr-mini")
+    return clean_topic_path(f"{MQTT_BASE_TOPIC}/{instance_id}", f"{MQTT_BASE_TOPIC}/dr154-1")
+
+
+def topics_from_base_topic(base_topic: Any, device_type: Any = DEFAULT_DEVICE_TYPE) -> dict[str, str]:
+    base = clean_topic_path(base_topic, "")
+    if not base:
+        return {"baseTopic": "", "configTopic": "", "lightCommandTopic": "", "lightResponseTopic": ""}
+    normalized = normalize_device_type(device_type)
+    command_suffix = "cmd" if normalized == "sheltr_mini" else "cmd/light"
+    response_suffix = "pub" if normalized == "sheltr_mini" else "pub/light"
+    return {
+        "baseTopic": base,
+        "configTopic": f"{base}/config",
+        "lightCommandTopic": f"{base}/{command_suffix}",
+        "lightResponseTopic": f"{base}/{response_suffix}",
+    }
+
+
+def infer_base_topic_from_mqtt(mqtt_cfg: dict[str, Any], fallback: str) -> str:
+    explicit = clean_topic_path(mqtt_cfg.get("baseTopic"), "")
+    if explicit:
+        return explicit
+    config_topic = clean_text(mqtt_cfg.get("configTopic"), "")
+    if config_topic.endswith("/config"):
+        return clean_topic_path(config_topic[: -len("/config")], fallback)
+    light_command_topic = clean_text(mqtt_cfg.get("lightCommandTopic"), "")
+    if light_command_topic.endswith("/cmd"):
+        return clean_topic_path(light_command_topic[: -len("/cmd")], fallback)
+    if light_command_topic.endswith("/cmd/light"):
+        return clean_topic_path(light_command_topic[: -len("/cmd/light")], fallback)
+    light_response_topic = clean_text(mqtt_cfg.get("lightResponseTopic"), "")
+    if light_response_topic.endswith("/pub"):
+        return clean_topic_path(light_response_topic[: -len("/pub")], fallback)
+    if light_response_topic.endswith("/pub/light"):
+        return clean_topic_path(light_response_topic[: -len("/pub/light")], fallback)
+    return clean_topic_path(fallback, fallback)
+
+
 def build_device_default_mqtt(device_type: Any, instance_id: str) -> dict[str, Any]:
     normalized = normalize_device_type(device_type)
     meta = device_type_definition(normalized)
-    response_topic = "" if normalized == "sheltr_mini" else f"{MQTT_BASE_TOPIC}/{instance_id}/pub/light"
+    base_topic = default_device_base_topic(normalized, instance_id)
+    topics = topics_from_base_topic(base_topic, normalized)
     return {
-        "lightCommandTopic": f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light",
-        "lightResponseTopic": response_topic,
+        "baseTopic": topics["baseTopic"],
+        "configTopic": topics["configTopic"],
+        "lightCommandTopic": topics["lightCommandTopic"],
+        "lightResponseTopic": topics["lightResponseTopic"],
         "lightPayloadFormat": clean_text(meta.get("defaultPayloadFormat"), "frame_hex_space_crlf"),
     }
 
@@ -494,10 +544,20 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
     mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
     mqtt_current = current.get("mqtt") if isinstance(current.get("mqtt"), dict) else {}
     mqtt_defaults = build_device_default_mqtt(device_type, instance_id)
+    current_base_topic = infer_base_topic_from_mqtt(mqtt_current, mqtt_defaults["baseTopic"])
+    base_topic = clean_topic_path(
+        mqtt_in.get("baseTopic"),
+        mqtt_defaults["baseTopic"] if apply_device_defaults else current_base_topic,
+    )
+    mqtt_topics = topics_from_base_topic(base_topic, device_type)
     mqtt_fallback = mqtt_defaults if apply_device_defaults else mqtt_current
+    config_topic = clean_text(
+        mqtt_in.get("configTopic"),
+        clean_text(mqtt_fallback.get("configTopic"), mqtt_topics["configTopic"]),
+    )
     light_command_topic = clean_text(
         mqtt_in.get("lightCommandTopic"),
-        clean_text(mqtt_fallback.get("lightCommandTopic"), mqtt_defaults["lightCommandTopic"]),
+        clean_text(mqtt_fallback.get("lightCommandTopic"), mqtt_topics["lightCommandTopic"]),
     )
     response_raw = mqtt_in.get("lightResponseTopic")
     if isinstance(response_raw, str):
@@ -505,7 +565,7 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
     else:
         light_response_topic = clean_text(
             mqtt_fallback.get("lightResponseTopic"),
-            clean_text(mqtt_defaults.get("lightResponseTopic"), ""),
+            clean_text(mqtt_topics.get("lightResponseTopic"), ""),
         )
     light_payload_format = clean_text(
         mqtt_in.get("lightPayloadFormat"),
@@ -540,6 +600,8 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
         "protocolVersion": "1.6",
         "boards": boards,
         "mqtt": {
+            "baseTopic": base_topic,
+            "configTopic": config_topic,
             "lightCommandTopic": light_command_topic,
             "lightResponseTopic": light_response_topic,
             "lightPayloadFormat": light_payload_format,
@@ -879,7 +941,8 @@ def mqtt_publish(
 def get_light_command_topic(instance: dict[str, Any]) -> str:
     instance_id = clean_text(instance.get("id"), "dr154-1")
     mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
-    return clean_text(mqtt_cfg.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
+    default_topic = build_device_default_mqtt(instance_device_type(instance), instance_id)["lightCommandTopic"]
+    return clean_text(mqtt_cfg.get("lightCommandTopic"), default_topic)
 
 
 def get_light_response_topic(instance: dict[str, Any]) -> str:
@@ -888,7 +951,14 @@ def get_light_response_topic(instance: dict[str, Any]) -> str:
     raw = mqtt_cfg.get("lightResponseTopic")
     if isinstance(raw, str):
         return raw.strip()
-    return f"{MQTT_BASE_TOPIC}/{instance_id}/pub/light"
+    return build_device_default_mqtt(instance_device_type(instance), instance_id)["lightResponseTopic"]
+
+
+def get_config_publish_topic(instance: dict[str, Any]) -> str:
+    instance_id = clean_text(instance.get("id"), "dr154-1")
+    mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
+    default_topic = build_device_default_mqtt(instance_device_type(instance), instance_id)["configTopic"]
+    return clean_text(mqtt_cfg.get("configTopic"), default_topic)
 
 
 def get_light_payload_format(instance: dict[str, Any]) -> str:
@@ -2907,7 +2977,7 @@ def api_publish_instance(instance_id: str):
     instance_id_real = clean_text(instance.get("id"), slugify(instance_id, "dr154-1"))
 
     body = request.get_json(silent=True) or {}
-    topic = clean_text(body.get("topic"), f"{MQTT_BASE_TOPIC}/{instance_id_real}/config")
+    topic = clean_text(body.get("topic"), get_config_publish_topic(instance))
     if not topic:
         return err("Topic MQTT non valido", 400)
 
