@@ -1,0 +1,4 @@
+webapp/__pycache__/
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+.DS_Store

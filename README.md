@@ -3,7 +3,7 @@
 Stack Docker per:
 
 - broker MQTT pubblico con autenticazione (`username/password`)
-- interfaccia web per gestire più dispositivi Sheltr (`Sheltr Mini`, `Sheltr 4G / DR154`)
+- interfaccia web React + `shadcn/ui` per gestire più dispositivi Sheltr (`Sheltr Mini`, `Sheltr 4G / DR154`)
 - configurazione schede protocollo 1.6 (`light`, `shutter`, `dimmer`, `thermostat`)
 - assegnazione nomi canali e stanze
 - interfaccia comando dispositivi (`luci`, `tapparelle`, `dimmer`, `termostato`) via MQTT
@@ -17,6 +17,9 @@ Stack Docker per:
 cp .env.example .env
 docker compose up -d --build
 ```
+
+La build Docker della webapp compila automaticamente il frontend Vite e pubblica la SPA sotto `webapp/static/app`.
+Se stai eseguendo solo Flask senza build frontend, il backend mantiene un fallback alle vecchie pagine statiche.
 
 ## Endpoint esposti
 
@@ -61,7 +64,7 @@ MQTT_PASSWORD=filippo1994
 9. Salva.
 10. Premi `Pubblica su MQTT`.
     - Per `Sheltr 4G / DR154` invia la configurazione su MQTT.
-    - Per `Sheltr Mini` esegue la sincronizzazione dal topic retained `<istanza>/config` pubblicato dal Mini.
+    - Per `Sheltr Mini` la UI mostra `Sincronizza Sheltr Mini` ed esegue la sincronizzazione dal topic retained `<istanza>/config` pubblicato dal Mini.
 11. Apri il controllo dedicato su `/control/<istanza>`.
 12. Se `Sheltr 4G / DR154` è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
 13. Per `Sheltr 4G / DR154` imposta anche `Topic risposta dispositivo` uguale al `Publish topic` del DR154.

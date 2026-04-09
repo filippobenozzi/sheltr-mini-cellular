@@ -141,6 +141,13 @@ AUTH_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsh
 CONFIG_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsheltr-config-auth-v1")
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+FRONTEND_APP_DIR = Path(app.static_folder or "static") / "app"
+
+
+def send_frontend_app_or_legacy(legacy_filename: str):
+    if FRONTEND_APP_DIR.is_dir() and (FRONTEND_APP_DIR / "index.html").is_file():
+        return send_from_directory(FRONTEND_APP_DIR, "index.html")
+    return send_from_directory(app.static_folder, legacy_filename)
 
 
 def now_iso() -> str:
@@ -3189,12 +3196,12 @@ def control_manifest_payload(instance_id: str, instance_name: str) -> dict[str, 
         "id": control_url,
         "name": clean_name,
         "short_name": short_name,
-        "description": "Sheltr Cloud control panel for DR154 devices",
+        "description": "Sheltr Cloud control panel for Sheltr Mini and Sheltr 4G devices",
         "start_url": control_url,
         "scope": "/control/",
         "display": "standalone",
-        "background_color": "#191919",
-        "theme_color": "#191919",
+        "background_color": "#ffffff",
+        "theme_color": "#ffffff",
         "icons": [
             {
                 "src": "/static/icon.svg",
@@ -3214,7 +3221,7 @@ def control_manifest_payload(instance_id: str, instance_name: str) -> dict[str, 
 
 @app.get("/")
 def root():
-    return send_from_directory(app.static_folder, "index.html")
+    return send_frontend_app_or_legacy("index.html")
 
 
 @app.get("/sw.js")
@@ -3260,30 +3267,30 @@ def manifest_instance(instance_id: str):
 
 @app.get("/control")
 def control_page():
-    return send_from_directory(app.static_folder, "control.html")
+    return send_frontend_app_or_legacy("control.html")
 
 
 @app.get("/control/<instance_id>")
 def control_instance_page(instance_id: str):
     _ = instance_id
-    return send_from_directory(app.static_folder, "control.html")
+    return send_frontend_app_or_legacy("control.html")
 
 
 @app.get("/config")
 def config_page():
-    return send_from_directory(app.static_folder, "config.html")
+    return send_frontend_app_or_legacy("config.html")
 
 
 @app.get("/instance/<instance_id>")
 def instance_page(instance_id: str):
     _ = instance_id
-    return send_from_directory(app.static_folder, "control.html")
+    return send_frontend_app_or_legacy("control.html")
 
 
 @app.get("/instance/<instance_id>/config")
 def instance_config_page(instance_id: str):
     _ = instance_id
-    return send_from_directory(app.static_folder, "config.html")
+    return send_frontend_app_or_legacy("config.html")
 
 
 @app.get("/healthz")
