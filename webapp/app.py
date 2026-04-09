@@ -146,8 +146,11 @@ FRONTEND_APP_DIR = Path(app.static_folder or "static") / "app"
 
 def send_frontend_app_or_legacy(legacy_filename: str):
     if FRONTEND_APP_DIR.is_dir() and (FRONTEND_APP_DIR / "index.html").is_file():
-        return send_from_directory(FRONTEND_APP_DIR, "index.html")
-    return send_from_directory(app.static_folder, legacy_filename)
+        response = send_from_directory(FRONTEND_APP_DIR, "index.html")
+    else:
+        response = send_from_directory(app.static_folder, legacy_filename)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 
 def now_iso() -> str:

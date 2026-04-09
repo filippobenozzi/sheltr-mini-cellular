@@ -1,4 +1,4 @@
-const CACHE_NAME = "sheltr-control-v1";
+const CACHE_NAME = "sheltr-control-v2";
 const STATIC_ASSETS = [
   "/static/icon.svg",
   "/static/logo.svg",

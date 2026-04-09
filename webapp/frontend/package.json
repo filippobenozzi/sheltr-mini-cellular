@@ -28,6 +28,7 @@
     "tw-animate-css": "latest"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
