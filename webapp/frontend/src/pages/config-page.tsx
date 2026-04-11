@@ -223,7 +223,7 @@ function transportHint(editor: EditorInstance, mqttBaseTopic: string, deviceType
     `Modulo: ${cleanText(meta.module, "-")}`,
     deviceType === "sheltr_mini"
       ? `Cloud standard: ${derived.configTopic || "-"} / ${derived.lightCommandTopic || "-"} / ${derived.lightResponseTopic || "-"}`
-      : `Topic DR154 standard: subscribe ${derived.lightCommandTopic || "-"} • publish ${derived.lightResponseTopic || "-"} • config ${derived.configTopic || "-"}`,
+      : `Topic DR154 derivati da ID: ${derived.lightCommandTopic || "-"} • ${derived.lightResponseTopic || "-"} • config ${derived.configTopic || "-"} • compatibilita automatica con il ramo storico /cmd/light -> /cmd/status se presente sul broker`,
   ]
 
   return parts.filter(Boolean).join(" • ")

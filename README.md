@@ -61,6 +61,7 @@ MQTT_PASSWORD=filippo1994
      - `commandTopic` = `/<istanza>/cmd`
      - `responseTopic` = `/<istanza>/status`
      - `payloadFormat` = `frame_hex_space_crlf`
+     - Se sul broker esiste il ramo storico `/<istanza>/cmd/status`, il runtime usa automaticamente la compatibilita `/<istanza>/cmd/light` -> `/<istanza>/cmd/status`.
    - Per `Sheltr Mini` non configuri manualmente le schede nel portale: il profilo si sincronizza dai dispositivi pubblicati dal Mini sul topic retained `<istanza>/config`.
 6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
    - Questo passaggio vale per `Sheltr 4G / DR154`.
@@ -109,6 +110,7 @@ Configurazione DR154 consigliata:
 
 - `Subscriber topic` (DR154): `/<istanza>/cmd`
 - `Publish topic` (DR154): `/<istanza>/status`
+- Compatibilita automatica: se il broker espone il ramo storico `/<istanza>/cmd/status`, il portale usa in automatico `/<istanza>/cmd/light` per i comandi e `/<istanza>/cmd/status` per il polling/feedback.
 
 Per `Sheltr Mini` con istanza `casa-pizero`:
 
