@@ -55,7 +55,6 @@ MQTT_STRICT_RESPONSE = os.environ.get("MQTT_STRICT_RESPONSE", "false").strip().l
     "yes",
     "on",
 }
-DR154_TOPIC_MODE_CACHE_TTL_SEC = max(30, int(os.environ.get("DR154_TOPIC_MODE_CACHE_TTL_SEC", "300")))
 INSTANCE_AUTH_TTL_SEC = max(300, int(os.environ.get("INSTANCE_AUTH_TTL_SEC", "43200")))
 INSTANCE_AUTH_SECRET = (os.environ.get("INSTANCE_AUTH_SECRET") or "").strip() or f"{MQTT_USERNAME}:{MQTT_PASSWORD}:instance-auth"
 CONFIG_AUTH_USERNAME = (os.environ.get("CONFIG_AUTH_USERNAME") or "").strip()
@@ -142,9 +141,7 @@ DEVICE_TYPE_META = {
 STORE_LOCK = threading.Lock()
 LIGHT_STATE_LOCK = threading.Lock()
 PROFILE_LOCK = threading.Lock()
-DR154_TOPIC_MODE_LOCK = threading.Lock()
 LIGHT_PROFILE_LAST_RUN: dict[str, str] = {}
-DR154_TOPIC_MODE_CACHE: dict[str, dict[str, Any]] = {}
 PROFILE_LOOP_STARTED = False
 AUTH_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsheltr-instance-auth-v1")
 CONFIG_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsheltr-config-auth-v1")
@@ -359,143 +356,6 @@ def build_device_default_mqtt(device_type: Any, instance_id: str) -> dict[str, A
         "lightResponseTopic": topics["lightResponseTopic"],
         "lightPayloadFormat": clean_text(meta.get("defaultPayloadFormat"), "frame_hex_space_crlf"),
     }
-
-
-def dr154_mqtt_topics_for_mode(instance_id: str, mode: str = "flat") -> dict[str, str]:
-    base = f"/{slugify(instance_id, 'dr154-1')}"
-    if mode == "legacy":
-        return {
-            "baseTopic": base,
-            "configTopic": f"{base}/config",
-            "lightCommandTopic": f"{base}/cmd/light",
-            "lightResponseTopic": f"{base}/cmd/status",
-        }
-    return {
-        "baseTopic": base,
-        "configTopic": f"{base}/config",
-        "lightCommandTopic": f"{base}/cmd",
-        "lightResponseTopic": f"{base}/status",
-    }
-
-
-def mqtt_probe_topic(
-    *,
-    topic: str,
-    timeout_ms: int = 400,
-    qos: int = 0,
-    retained_only: bool = False,
-) -> dict[str, Any]:
-    cleaned_topic = clean_text(topic, "")
-    if not cleaned_topic:
-        return {"ok": False, "error": "topic_non_configurato"}
-
-    subscribed = threading.Event()
-    result_ready = threading.Event()
-    seen: dict[str, Any] = {}
-    errors: list[str] = []
-
-    def on_subscribe(
-        client: mqtt.Client,
-        _userdata: Any,
-        _mid: int,
-        _granted_qos: list[int],
-        _properties: Any = None,
-    ) -> None:
-        _ = client
-        subscribed.set()
-
-    def on_message(client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
-        _ = client
-        retained = bool(getattr(msg, "retain", False))
-        if retained_only and not retained:
-            return
-        seen["topic"] = clean_text(getattr(msg, "topic", ""), cleaned_topic)
-        seen["retain"] = retained
-        seen["payload"] = bytes(msg.payload or b"")
-        result_ready.set()
-
-    client_id = f"iotsheltr-probe-{os.getpid()}-{int(time.time() * 1000)}"
-    client = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=client_id,
-        protocol=mqtt.MQTTv311,
-    )
-    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-    client.on_message = on_message
-    client.on_subscribe = on_subscribe
-
-    try:
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
-        client.loop_start()
-        sub_rc, _ = client.subscribe(cleaned_topic, qos=min(1, max(0, qos)))
-        if sub_rc not in (0, mqtt.MQTT_ERR_SUCCESS):
-            raise RuntimeError(f"Subscribe MQTT fallita rc={sub_rc}")
-        if not subscribed.wait(timeout=1.5):
-            raise RuntimeError("Timeout subscribe MQTT su topic probe")
-        result_ready.wait(timeout=max(0.2, timeout_ms / 1000.0))
-    except Exception as exc:  # noqa: BLE001
-        errors.append(str(exc))
-    finally:
-        try:
-            client.loop_stop()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            client.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
-
-    if "topic" in seen:
-        return {
-            "ok": True,
-            "topic": seen.get("topic"),
-            "retain": bool(seen.get("retain")),
-            "payload": seen.get("payload"),
-        }
-    if errors:
-        return {"ok": False, "error": "; ".join(errors)}
-    return {"ok": False, "error": "timeout_probe_topic"}
-
-
-def detect_dr154_topic_mode(instance_id: str) -> str:
-    slug = slugify(instance_id, "dr154-1")
-    now_ts = time.time()
-    with DR154_TOPIC_MODE_LOCK:
-        cached = DR154_TOPIC_MODE_CACHE.get(slug)
-        if isinstance(cached, dict) and (now_ts - float(cached.get("checkedAt", 0.0))) < DR154_TOPIC_MODE_CACHE_TTL_SEC:
-            cached_mode = clean_text(cached.get("mode"), "flat")
-            return cached_mode if cached_mode in {"flat", "legacy"} else "flat"
-
-    legacy_topics = dr154_mqtt_topics_for_mode(slug, "legacy")
-    probe = mqtt_probe_topic(
-        topic=legacy_topics["lightResponseTopic"],
-        timeout_ms=350,
-        qos=min(1, max(0, MQTT_COMMAND_QOS)),
-        retained_only=True,
-    )
-    mode = "legacy" if probe.get("ok") else "flat"
-
-    with DR154_TOPIC_MODE_LOCK:
-        DR154_TOPIC_MODE_CACHE[slug] = {
-            "mode": mode,
-            "checkedAt": now_ts,
-            "probeTopic": legacy_topics["lightResponseTopic"],
-            "probeRetain": bool(probe.get("retain")),
-        }
-    return mode
-
-
-def instance_effective_mqtt(instance: dict[str, Any]) -> dict[str, Any]:
-    runtime = instance_runtime_mqtt(instance)
-    if instance_device_type(instance) != "sheltr_4g":
-        return runtime
-
-    instance_id = clean_text(instance.get("id"), "dr154-1")
-    mode = detect_dr154_topic_mode(instance_id)
-    effective = dict(runtime)
-    effective.update(dr154_mqtt_topics_for_mode(instance_id, mode))
-    effective["topicMode"] = mode
-    return effective
 
 
 def instance_runtime_mqtt(instance: dict[str, Any]) -> dict[str, Any]:
@@ -1416,19 +1276,19 @@ def mqtt_publish(
 
 
 def get_light_command_topic(instance: dict[str, Any]) -> str:
-    return clean_text(instance_effective_mqtt(instance).get("lightCommandTopic"), "")
+    return clean_text(instance_runtime_mqtt(instance).get("lightCommandTopic"), "")
 
 
 def get_light_response_topic(instance: dict[str, Any]) -> str:
-    return clean_text(instance_effective_mqtt(instance).get("lightResponseTopic"), "")
+    return clean_text(instance_runtime_mqtt(instance).get("lightResponseTopic"), "")
 
 
 def get_config_publish_topic(instance: dict[str, Any]) -> str:
-    return clean_text(instance_effective_mqtt(instance).get("configTopic"), "")
+    return clean_text(instance_runtime_mqtt(instance).get("configTopic"), "")
 
 
 def get_light_payload_format(instance: dict[str, Any]) -> str:
-    fmt = clean_text(instance_effective_mqtt(instance).get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
+    fmt = clean_text(instance_runtime_mqtt(instance).get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
     return fmt if fmt in LIGHT_PAYLOAD_FORMATS else "frame_hex_space_crlf"
 
 

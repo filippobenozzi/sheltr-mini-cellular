@@ -408,7 +408,7 @@
         `Modulo: ${cleanText(meta.module, "-")}`,
         type === "sheltr_mini"
           ? `Cloud standard: ${topics.configTopic || "-"} / ${topics.lightCommandTopic || "-"} / ${topics.lightResponseTopic || "-"} • formato ${cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")} • il Mini pubblica la config retained su /config`
-          : `Topic DR154 derivati da ID: ${topics.lightCommandTopic || "-"} • ${topics.lightResponseTopic || "-"} • config ${topics.configTopic || "-"} • compatibilita automatica con il ramo storico /cmd/light -> /cmd/status se presente sul broker`
+          : `Topic DR154 standard: subscribe ${topics.lightCommandTopic || "-"} • publish ${topics.lightResponseTopic || "-"} • config ${topics.configTopic || "-"}`
       ];
       el.deviceTypeHint.textContent = bits.filter(Boolean).join(" • ");
     }
