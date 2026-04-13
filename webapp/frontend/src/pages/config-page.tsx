@@ -5,6 +5,14 @@ import { Copy, ExternalLink, LayoutList, LogOut, Plus, RefreshCw, Save, Settings
 import { AppShell } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator as BreadcrumbDivider,
+} from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -255,10 +263,6 @@ function transportHint(editor: EditorInstance, mqttBaseTopic: string, deviceType
   ]
 
   return parts.filter(Boolean).join(" • ")
-}
-
-function transportFromEditor(editor: EditorInstance, mqttBaseTopic: string) {
-  return topicsFromBaseTopic(defaultDeviceBaseTopic(editor.id, editor.deviceType, mqttBaseTopic), editor.deviceType)
 }
 
 function formatUpdatedAt(value?: string) {
@@ -871,6 +875,14 @@ export function ConfigPage() {
     }
   }
 
+  function requestSaveCurrent() {
+    void saveCurrent(false).catch((caught) => {
+      if (!handleConfigAuthError(caught)) {
+        showNote(caught instanceof Error ? caught.message : "Salvataggio non riuscito", true)
+      }
+    })
+  }
+
   async function configLogin() {
     try {
       const response = await apiJson<ConfigAuthLoginResponse>("/api/config/auth/login", {
@@ -927,9 +939,9 @@ export function ConfigPage() {
   const configAllowed = !configAuthRequired || Boolean(configToken)
   const isMini = editor?.deviceType === "sheltr_mini"
   const deviceHint = editor ? transportHint(editor, mqttBaseTopic, deviceTypes) : ""
-  const transport = editor ? transportFromEditor(editor, mqttBaseTopic) : null
   const associatedDevices = editor ? associatedDevicesFromBoards(editor.boards) : []
   const pageTitle = listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
+  const currentCrumb = listView ? "Istanze" : editor?.name || "Configurazione istanza"
   return (
     <AppShell
       title="Configurazione"
@@ -971,7 +983,7 @@ export function ConfigPage() {
         <>
           <SidebarProvider defaultOpen>
             <Sidebar collapsible="icon">
-              <SidebarHeader className="border-b border-sidebar-border p-3">
+              <SidebarHeader className="h-24 justify-center border-b border-sidebar-border px-4 md:h-28 md:px-6">
                 <div className="space-y-1 overflow-hidden px-2 py-1 group-data-[collapsible=icon]:hidden">
                   <p className="text-xs font-medium uppercase tracking-[0.24em] text-sidebar-foreground/60">Sheltr Cloud</p>
                   <p className="truncate text-sm font-semibold text-sidebar-foreground">Configuration</p>
@@ -1036,30 +1048,73 @@ export function ConfigPage() {
             </Sidebar>
 
             <SidebarInset className="min-w-0 w-full">
-              <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-6">
-                <div className="flex min-w-0 items-center gap-3">
-                  <SidebarTrigger className="rounded-full" />
-                  <SidebarSeparator orientation="vertical" className="h-4" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{pageTitle}</p>
-                    <p className="hidden text-xs text-muted-foreground md:block">Configurazione istanze Sheltr Cloud</p>
+              <header className="sticky top-0 z-20 flex h-24 shrink-0 items-stretch justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:h-28 md:px-6">
+                <div className="flex min-w-0 items-stretch gap-3 self-stretch">
+                  <div className="flex items-center">
+                    <SidebarTrigger className="rounded-full" />
+                  </div>
+                  <SidebarSeparator orientation="vertical" className="mx-1" />
+                  <div className="flex min-w-0 flex-col justify-center gap-2 py-4">
+                    <Breadcrumb>
+                      <BreadcrumbList>
+                        <BreadcrumbItem>
+                          <BreadcrumbLink asChild>
+                            <Link to="/">Home</Link>
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbDivider />
+                        <BreadcrumbItem>
+                          {listView ? (
+                            <BreadcrumbPage>Istanze</BreadcrumbPage>
+                          ) : (
+                            <BreadcrumbLink asChild>
+                              <Link to="/config">Istanze</Link>
+                            </BreadcrumbLink>
+                          )}
+                        </BreadcrumbItem>
+                        {!listView ? (
+                          <>
+                            <BreadcrumbDivider />
+                            <BreadcrumbItem>
+                              <BreadcrumbPage>{currentCrumb}</BreadcrumbPage>
+                            </BreadcrumbItem>
+                          </>
+                        ) : null}
+                      </BreadcrumbList>
+                    </Breadcrumb>
+                    <p className="truncate text-2xl font-semibold tracking-tight">{pageTitle}</p>
                   </div>
                 </div>
 
                 <nav className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
-                    <Plus className="size-4" />
-                    <span className="hidden sm:inline">Aggiungi istanza</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={listView ? "secondary" : "outline"}
-                    className="rounded-full"
-                    onClick={() => navigate("/config")}
-                  >
-                    <LayoutList className="size-4" />
-                    <span className="hidden sm:inline">Istanze</span>
-                  </Button>
+                  {editor ? (
+                    <>
+                      <Button type="button" variant="outline" className="rounded-full" onClick={() => void copyText(fullControlUrl(editor.id))}>
+                        <Copy className="size-4" />
+                        <span className="hidden sm:inline">Copia link</span>
+                      </Button>
+                      <Button type="button" className="rounded-full" onClick={requestSaveCurrent}>
+                        <Save className="size-4" />
+                        <span className="hidden sm:inline">Salva</span>
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
+                        <Plus className="size-4" />
+                        <span className="hidden sm:inline">Aggiungi istanza</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={listView ? "secondary" : "outline"}
+                        className="rounded-full"
+                        onClick={() => navigate("/config")}
+                      >
+                        <LayoutList className="size-4" />
+                        <span className="hidden sm:inline">Istanze</span>
+                      </Button>
+                    </>
+                  )}
                 </nav>
               </header>
 
@@ -1076,12 +1131,7 @@ export function ConfigPage() {
 
                   {!loading && listView ? (
                     <section className="w-full min-w-0 space-y-4">
-                      <div className="space-y-1">
-                        <h2 className="text-2xl font-semibold tracking-tight">Istanze</h2>
-                        <p className="text-sm text-muted-foreground">
-                          Il pulsante “Config” apre la configurazione dedicata della singola istanza.
-                        </p>
-                      </div>
+                      <h2 className="text-2xl font-semibold tracking-tight">Istanze</h2>
                       <InstancesTable
                         instances={instances}
                         currentId={currentId}
@@ -1102,244 +1152,152 @@ export function ConfigPage() {
                   ) : null}
 
                   {!loading && editor ? (
-                    <>
-                      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.15fr)_360px]">
-                        <Card className="border-border/80 bg-background/90">
-                          <CardHeader>
-                            <CardTitle>Dati istanza</CardTitle>
-                            <CardDescription>
-                              Modifica le informazioni principali. I topic MQTT restano sempre derivati dall’ID istanza.
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-6">
-                            <div className="grid gap-4 md:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label>ID istanza</Label>
-                                <Input
-                                  value={editor.id}
-                                  onChange={(event) => {
-                                    const next = { ...editor, id: slugify(event.target.value, editor.id || "dr154-1") }
-                                    updateEditor(applyDerivedTransport(next, mqttBaseTopic))
-                                  }}
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Nome istanza</Label>
-                                <Input value={editor.name} onChange={(event) => updateEditor({ ...editor, name: event.target.value })} />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Tipo dispositivo</Label>
-                                <Select
-                                  value={editor.deviceType}
-                                  onValueChange={(value) => {
-                                    const nextType = normalizeDeviceType(value)
-                                    if (nextType === editor.deviceType) {
-                                      return
-                                    }
-                                    const label = cleanText(deviceTypes[nextType]?.label, nextType)
-                                    const ok = window.confirm(
-                                      `Applicare il preset '${label}'? Verranno aggiornati topic MQTT, formato payload e schede dell'istanza corrente.`
-                                    )
-                                    if (!ok) {
-                                      return
-                                    }
-                                    updateEditor(applyDevicePreset(editor, nextType, mqttBaseTopic))
-                                    showNote(`Preset '${label}' applicato. Controlla nomi canali e stanze prima di salvare.`)
-                                  }}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {Object.entries(deviceTypes).map(([value, meta]) => (
-                                      <SelectItem key={value} value={value}>
-                                        {cleanText(meta.label, value)}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Versione protocollo</Label>
-                                <Input value="1.6" readOnly />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>{isMini ? "Dispositivi rilevati" : "Schede configurate"}</Label>
-                                <Input
-                                  readOnly
-                                  value={
-                                    isMini
-                                      ? associatedDevices.length
-                                        ? `AUTO (${associatedDevices.length})`
-                                        : "AUTO"
-                                      : String(editor.boards.length)
-                                  }
-                                />
-                              </div>
-                            </div>
-
-                            <Alert>
-                              <AlertTitle>{cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}</AlertTitle>
-                              <AlertDescription>{deviceHint}</AlertDescription>
-                            </Alert>
-                          </CardContent>
-                        </Card>
-
-                        <div className="space-y-6">
-                          <Card className="border-border/80 bg-background/90">
-                            <CardHeader>
-                              <CardTitle>Trasporto</CardTitle>
-                              <CardDescription>Riepilogo read-only dei topic MQTT derivati e del formato payload.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="grid gap-3">
-                              <div className="rounded-2xl border p-4">
-                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Config</p>
-                                <p className="mt-2 break-all font-mono text-sm">{transport?.configTopic || "-"}</p>
-                              </div>
-                              <div className="rounded-2xl border p-4">
-                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Comandi</p>
-                                <p className="mt-2 break-all font-mono text-sm">{transport?.lightCommandTopic || "-"}</p>
-                              </div>
-                              <div className="rounded-2xl border p-4">
-                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Risposta</p>
-                                <p className="mt-2 break-all font-mono text-sm">{transport?.lightResponseTopic || "-"}</p>
-                              </div>
-                              <div className="rounded-2xl border p-4">
-                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Payload</p>
-                                <p className="mt-2 font-mono text-sm">
-                                  {cleanText(deviceTypes[editor.deviceType]?.defaultPayloadFormat, "frame_hex_space_crlf")}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className="border-border/80 bg-background/90">
-                            <CardHeader>
-                              <CardTitle>Accesso controllo</CardTitle>
-                              <CardDescription>Credenziali usate dalla pagina di controllo della singola istanza.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                              <div className="space-y-2">
-                                <Label>Username login controllo</Label>
-                                <Input
-                                  value={editor.auth.username}
-                                  onChange={(event) =>
-                                    updateEditor({ ...editor, auth: { ...editor.auth, username: event.target.value } })
-                                  }
-                                  placeholder="es. filippo"
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Password login controllo</Label>
-                                <Input
-                                  value={editor.auth.password}
-                                  onChange={(event) =>
-                                    updateEditor({ ...editor, auth: { ...editor.auth, password: event.target.value } })
-                                  }
-                                  placeholder="Visibile: nuova password o vuoto"
-                                />
-                              </div>
-                              <div className="flex items-center justify-between rounded-2xl border p-4">
-                                <div className="space-y-1">
-                                  <Label>Rimuovi password</Label>
-                                  <p className="text-sm text-muted-foreground">Cancella la password salvata per questa istanza.</p>
-                                </div>
-                                <Switch
-                                  checked={editor.auth.clearPassword}
-                                  onCheckedChange={(checked) =>
-                                    updateEditor({ ...editor, auth: { ...editor.auth, clearPassword: checked } })
-                                  }
-                                />
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className="border-border/80 bg-background/90">
-                            <CardHeader>
-                              <CardTitle>Azioni</CardTitle>
-                              <CardDescription>Salva prima la configurazione, poi pubblica o sincronizza il dispositivo.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              <Button
-                                type="button"
-                                className="w-full"
-                                onClick={() => {
-                                  void saveCurrent(false).catch((caught) => {
-                                    if (!handleConfigAuthError(caught)) {
-                                      showNote(caught instanceof Error ? caught.message : "Salvataggio non riuscito", true)
-                                    }
-                                  })
-                                }}
-                              >
-                                <Save className="size-4" />
-                                Salva
-                              </Button>
-                              <Button type="button" variant="outline" className="w-full" onClick={publishCurrent}>
-                                <RefreshCw className="size-4" />
-                                {isMini ? "Sincronizza Sheltr Mini" : "Pubblica su MQTT"}
-                              </Button>
-                              <Button type="button" variant="destructive" className="w-full" onClick={deleteCurrent}>
-                                <Trash2 className="size-4" />
-                                Elimina istanza
-                              </Button>
-                              <Separator />
-                              <Button asChild variant="outline" className="w-full">
-                                <Link to={controlUrl(editor.id)}>Apri controllo</Link>
-                              </Button>
-                              <Button type="button" variant="ghost" className="w-full" onClick={() => void copyText(fullControlUrl(editor.id))}>
-                                <Copy className="size-4" />
-                                Copia link controllo
-                              </Button>
-                            </CardContent>
-                          </Card>
+                    <div className="space-y-8">
+                      <section className="space-y-4">
+                        <h2 className="text-xl font-semibold tracking-tight">Dati istanza</h2>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>ID istanza</Label>
+                            <Input
+                              value={editor.id}
+                              onChange={(event) => {
+                                const next = { ...editor, id: slugify(event.target.value, editor.id || "dr154-1") }
+                                updateEditor(applyDerivedTransport(next, mqttBaseTopic))
+                              }}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Nome istanza</Label>
+                            <Input value={editor.name} onChange={(event) => updateEditor({ ...editor, name: event.target.value })} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Tipo dispositivo</Label>
+                            <Select
+                              value={editor.deviceType}
+                              onValueChange={(value) => {
+                                const nextType = normalizeDeviceType(value)
+                                if (nextType === editor.deviceType) {
+                                  return
+                                }
+                                const label = cleanText(deviceTypes[nextType]?.label, nextType)
+                                const ok = window.confirm(
+                                  `Applicare il preset '${label}'? Verranno aggiornati topic MQTT, formato payload e schede dell'istanza corrente.`
+                                )
+                                if (!ok) {
+                                  return
+                                }
+                                updateEditor(applyDevicePreset(editor, nextType, mqttBaseTopic))
+                                showNote(`Preset '${label}' applicato. Controlla nomi canali e stanze prima di salvare.`)
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(deviceTypes).map(([value, meta]) => (
+                                  <SelectItem key={value} value={value}>
+                                    {cleanText(meta.label, value)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Versione protocollo</Label>
+                            <Input value="1.6" readOnly />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>{isMini ? "Dispositivi rilevati" : "Schede configurate"}</Label>
+                            <Input
+                              readOnly
+                              value={
+                                isMini
+                                  ? associatedDevices.length
+                                    ? `AUTO (${associatedDevices.length})`
+                                    : "AUTO"
+                                  : String(editor.boards.length)
+                              }
+                            />
+                          </div>
                         </div>
-                      </div>
+                        {deviceHint ? <p className="text-sm text-muted-foreground">{deviceHint}</p> : null}
+                      </section>
+
+                      <Separator />
+
+                      <section className="space-y-4">
+                        <h2 className="text-xl font-semibold tracking-tight">Accesso</h2>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Username accesso</Label>
+                            <Input
+                              value={editor.auth.username}
+                              onChange={(event) =>
+                                updateEditor({ ...editor, auth: { ...editor.auth, username: event.target.value } })
+                              }
+                              placeholder="es. filippo"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Password accesso</Label>
+                            <Input
+                              value={editor.auth.password}
+                              onChange={(event) =>
+                                updateEditor({ ...editor, auth: { ...editor.auth, password: event.target.value } })
+                              }
+                              placeholder="Visibile: nuova password o vuoto"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="space-y-1">
+                              <Label>Rimuovi password</Label>
+                              <p className="text-sm text-muted-foreground">Cancella la password salvata per questa istanza.</p>
+                            </div>
+                            <Switch
+                              checked={editor.auth.clearPassword}
+                              onCheckedChange={(checked) =>
+                                updateEditor({ ...editor, auth: { ...editor.auth, clearPassword: checked } })
+                              }
+                            />
+                          </div>
+                        </div>
+                      </section>
+
+                      <Separator />
 
                       {isMini ? (
-                        <Card className="border-border/80 bg-background/90">
-                          <CardHeader>
-                            <CardTitle>Dispositivi autoconfigurati</CardTitle>
-                            <CardDescription>
-                              Sheltr Mini mostra qui solo i dispositivi rilevati dal modulo tramite sincronizzazione cloud.
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            {associatedDevices.length ? (
-                              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                                {associatedDevices.map((device) => (
-                                  <Card key={device.id} className="border-border/70 shadow-none">
-                                    <CardContent className="space-y-3 p-4">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <h3 className="font-semibold">{device.name}</h3>
-                                        <Badge variant="outline">{KIND_META[device.kind]?.label ?? device.kind}</Badge>
-                                      </div>
-                                      <p className="text-sm text-muted-foreground">
-                                        {device.room} • {device.boardName} • C{device.channel}
-                                      </p>
-                                      {device.sourceId ? <p className="text-xs text-muted-foreground">Source: {device.sourceId}</p> : null}
-                                    </CardContent>
-                                  </Card>
-                                ))}
-                              </div>
-                            ) : (
-                              <Alert>
-                                <AlertTitle>Nessun dispositivo sincronizzato</AlertTitle>
-                                <AlertDescription>
-                                  Salva l’istanza, poi usa “Sincronizza Sheltr Mini” per leggere il retained cloud su `{editor.id}/config`.
-                                </AlertDescription>
-                              </Alert>
-                            )}
-                          </CardContent>
-                        </Card>
+                        <section className="space-y-4">
+                          <h2 className="text-xl font-semibold tracking-tight">Dispositivi autoconfigurati</h2>
+                          {associatedDevices.length ? (
+                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                              {associatedDevices.map((device) => (
+                                <Card key={device.id} className="border-border/70 shadow-none">
+                                  <CardContent className="space-y-3 p-4">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h3 className="font-semibold">{device.name}</h3>
+                                      <Badge variant="outline">{KIND_META[device.kind]?.label ?? device.kind}</Badge>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">
+                                      {device.room} • {device.boardName} • C{device.channel}
+                                    </p>
+                                    {device.sourceId ? <p className="text-xs text-muted-foreground">Source: {device.sourceId}</p> : null}
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          ) : (
+                            <Alert>
+                              <AlertTitle>Nessun dispositivo sincronizzato</AlertTitle>
+                              <AlertDescription>
+                                Salva l’istanza, poi usa “Sincronizza Sheltr Mini” per leggere il retained cloud su `{editor.id}/config`.
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                        </section>
                       ) : (
                         <section className="space-y-4">
                           <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <h3 className="text-lg font-semibold">Schede</h3>
-                              <p className="text-sm text-muted-foreground">
-                                Configura indirizzo, tipo, canali e stanze di ogni scheda associata all’istanza.
-                              </p>
-                            </div>
+                            <h2 className="text-xl font-semibold tracking-tight">Schede</h2>
                             <Button
                               type="button"
                               variant="outline"
@@ -1378,13 +1336,30 @@ export function ConfigPage() {
                               />
                             ))
                           ) : (
-                            <Card className="border-border/80 bg-background/90">
-                              <CardContent className="p-6 text-sm text-muted-foreground">Nessuna scheda configurata.</CardContent>
-                            </Card>
+                            <p className="text-sm text-muted-foreground">Nessuna scheda configurata.</p>
                           )}
                         </section>
                       )}
-                    </>
+
+                      <Separator />
+
+                      <section className="space-y-4">
+                        <h2 className="text-xl font-semibold tracking-tight">Azioni</h2>
+                        <div className="flex flex-wrap gap-3">
+                          <Button type="button" variant="outline" onClick={publishCurrent}>
+                            <RefreshCw className="size-4" />
+                            {isMini ? "Sincronizza Sheltr Mini" : "Pubblica su MQTT"}
+                          </Button>
+                          <Button asChild variant="outline">
+                            <Link to={controlUrl(editor.id)}>Apri controllo</Link>
+                          </Button>
+                          <Button type="button" variant="destructive" onClick={deleteCurrent}>
+                            <Trash2 className="size-4" />
+                            Elimina istanza
+                          </Button>
+                        </div>
+                      </section>
+                    </div>
                   ) : null}
                 </div>
               </div>
