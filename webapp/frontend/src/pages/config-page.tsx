@@ -39,7 +39,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -846,6 +845,7 @@ export function ConfigPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [userDialogOpen, setUserDialogOpen] = useState(false)
   const [userDraft, setUserDraft] = useState<UserDraft>(emptyUserDraft())
+  const [instanceUserIds, setInstanceUserIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
@@ -872,6 +872,7 @@ export function ConfigPage() {
       setUsers([])
       setEditor(null)
       setCurrentId("")
+      setInstanceUserIds([])
       navigate("/config", { replace: true })
       showNote("Sessione configurazione scaduta o non valida. Effettua il login config.", true)
       return true
@@ -917,6 +918,7 @@ export function ConfigPage() {
     })
     setCurrentId(response.instance.id)
     setEditor(editorFromInstance(response.instance, mqttBaseTopicValue))
+    setInstanceUserIds(Array.isArray(response.instance.assignedUserIds) ? response.instance.assignedUserIds : [])
     return response.instance
   }
 
@@ -959,6 +961,7 @@ export function ConfigPage() {
         } else {
           setEditor(null)
           setCurrentId("")
+          setInstanceUserIds([])
         }
       } catch (caught) {
         if (cancelled) return
@@ -967,6 +970,7 @@ export function ConfigPage() {
           setUsers([])
           setEditor(null)
           setCurrentId("")
+          setInstanceUserIds([])
           showNote(caught instanceof Error ? caught.message : "Errore caricamento configurazione", true)
         }
       } finally {
@@ -1106,9 +1110,18 @@ export function ConfigPage() {
       tokenConfig: configTokenConfig(configToken),
     })
     const saved = response.instance
+    const assignableIds = users.filter((user) => user.role === "user").map((user) => user.id)
+    const assignedUserIds = instanceUserIds.filter((userId) => assignableIds.includes(userId))
+    await apiJson<{ ok?: boolean; userIds?: string[] }>(`/api/config/instances/${encodeURIComponent(saved.id)}/users`, {
+      method: "PUT",
+      body: { userIds: assignedUserIds },
+      tokenConfig: configTokenConfig(configToken),
+    })
     setCurrentId(saved.id)
     setEditor(editorFromInstance(saved, mqttBaseTopic))
+    setInstanceUserIds(assignedUserIds)
     await loadInstancesList()
+    await loadUsersList()
     if (routeInstanceId !== saved.id) {
       navigate(instanceConfigUrl(saved.id), { replace: true })
     }
@@ -1182,6 +1195,7 @@ export function ConfigPage() {
       await loadUsersList()
       setEditor(null)
       setCurrentId("")
+      setInstanceUserIds([])
       showNote(`Istanza '${currentId}' eliminata.`)
       navigate("/config")
     } catch (caught) {
@@ -1246,6 +1260,7 @@ export function ConfigPage() {
     setUsers([])
     setEditor(null)
     setCurrentId("")
+    setInstanceUserIds([])
     navigate("/config", { replace: true })
     showNote("Logout configurazione eseguito.", false, "info")
   }
@@ -1258,6 +1273,7 @@ export function ConfigPage() {
   const isMini = editor?.deviceType === "sheltr_mini"
   const deviceHint = editor ? transportHint(editor, mqttBaseTopic, deviceTypes) : ""
   const associatedDevices = editor ? associatedDevicesFromBoards(editor.boards) : []
+  const assignableUsers = users.filter((user) => user.role === "user")
   const pageTitle = usersView ? "Utenti" : listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
   const currentCrumb = usersView ? "Utenti" : listView ? "Istanze" : editor?.name || "Configurazione istanza"
   return (
@@ -1301,39 +1317,19 @@ export function ConfigPage() {
           <SidebarProvider defaultOpen>
             <Sidebar collapsible="icon">
               <SidebarHeader className="h-16 justify-center border-b border-sidebar-border px-4 md:h-20 md:px-6">
-                <div className="space-y-1 overflow-hidden px-2 py-1 group-data-[collapsible=icon]:hidden">
-                  <p className="text-xs font-medium uppercase tracking-[0.24em] text-sidebar-foreground/60">Sheltr Cloud</p>
-                  <p className="truncate text-sm font-semibold text-sidebar-foreground">Configuration</p>
+                <div className="overflow-hidden px-2 py-1 group-data-[collapsible=icon]:hidden">
+                  <p className="text-sm font-semibold leading-tight text-sidebar-foreground">
+                    Sheltr
+                    <br />
+                    Cloud
+                  </p>
                 </div>
               </SidebarHeader>
 
               <SidebarContent>
                 <SidebarGroup>
-                  <SidebarGroupLabel>Navigazione</SidebarGroupLabel>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      <SidebarMenuItem>
-                        <SidebarMenuButton
-                          type="button"
-                          isActive={createOpen}
-                          tooltip="Aggiungi istanza"
-                          onClick={() => setCreateOpen(true)}
-                        >
-                          <Plus />
-                          <span className="group-data-[collapsible=icon]:hidden">Aggiungi istanza</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                      <SidebarMenuItem>
-                        <SidebarMenuButton
-                          type="button"
-                          isActive={userDialogOpen && !userDraft.id}
-                          tooltip="Nuovo utente"
-                          onClick={openNewUser}
-                        >
-                          <UserPlus />
-                          <span className="group-data-[collapsible=icon]:hidden">Nuovo utente</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
                       <SidebarMenuItem>
                         <SidebarMenuButton
                           type="button"
@@ -1557,6 +1553,37 @@ export function ConfigPage() {
                           </div>
                         </div>
                         {deviceHint ? <p className="text-sm text-muted-foreground">{deviceHint}</p> : null}
+                      </section>
+
+                      <Separator />
+
+                      <section className="space-y-4">
+                        <h2 className="text-xl font-semibold tracking-tight">Utenti assegnati</h2>
+                        {assignableUsers.length ? (
+                          <div className="space-y-3">
+                            <select
+                              multiple
+                              value={instanceUserIds}
+                              size={Math.min(Math.max(assignableUsers.length, 4), 8)}
+                              className="min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none"
+                              onChange={(event) => {
+                                const values = Array.from(event.currentTarget.selectedOptions, (option) => option.value)
+                                setInstanceUserIds(values)
+                              }}
+                            >
+                              {assignableUsers.map((user) => (
+                                <option key={user.id} value={user.id}>
+                                  {user.username} ({user.email})
+                                </option>
+                              ))}
+                            </select>
+                            <p className="text-sm text-muted-foreground">
+                              Seleziona uno o più user da autorizzare su questa istanza. Gli admin hanno accesso automatico.
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">Non ci sono user creati da assegnare a questa istanza.</p>
+                        )}
                       </section>
 
                       <Separator />

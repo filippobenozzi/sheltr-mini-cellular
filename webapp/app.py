@@ -1161,6 +1161,23 @@ def fetch_user_assignments_map() -> dict[str, list[str]]:
     return out
 
 
+def fetch_instance_user_ids(instance_id: str) -> list[str]:
+    resolved_id = slugify(instance_id, "dr154-1")
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id
+                FROM app_user_instance_assignments
+                WHERE instance_id = %s
+                ORDER BY created_at ASC
+                """,
+                (resolved_id,),
+            )
+            rows = cur.fetchall()
+    return [clean_text(row.get("user_id"), "") for row in rows if clean_text(row.get("user_id"), "")]
+
+
 def user_public_from_row(row: dict[str, Any], assignments: list[str] | None = None) -> dict[str, Any]:
     instance_ids = assignments if isinstance(assignments, list) else []
     return {
@@ -1248,6 +1265,50 @@ def delete_instance_user_assignments(instance_id: str) -> None:
     with connect_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM app_user_instance_assignments WHERE instance_id = %s", (slugify(instance_id, "dr154-1"),))
+
+
+def set_instance_user_assignments(instance_id: str, user_ids: list[str]) -> list[str]:
+    resolved_instance_id = slugify(instance_id, "dr154-1")
+    normalized_user_ids: list[str] = []
+    seen: set[str] = set()
+    for user_id in user_ids:
+        clean_id = clean_text(user_id, "")
+        if clean_id and clean_id not in seen:
+            seen.add(clean_id)
+            normalized_user_ids.append(clean_id)
+
+    valid_user_ids: list[str] = []
+    if normalized_user_ids:
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, role
+                    FROM app_users
+                    WHERE id = ANY(%s)
+                    """,
+                    (normalized_user_ids,),
+                )
+                rows = cur.fetchall()
+        valid_user_ids = [
+            clean_text(row.get("id"), "")
+            for row in rows
+            if normalize_user_role(row.get("role"), "user") == "user" and clean_text(row.get("id"), "")
+        ]
+
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM app_user_instance_assignments WHERE instance_id = %s", (resolved_instance_id,))
+            for user_id in valid_user_ids:
+                cur.execute(
+                    """
+                    INSERT INTO app_user_instance_assignments (user_id, instance_id, created_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (user_id, instance_id) DO NOTHING
+                    """,
+                    (user_id, resolved_instance_id),
+                )
+    return valid_user_ids
 
 
 def upsert_user(payload: dict[str, Any], user_id: str | None = None) -> dict[str, Any]:
@@ -1385,8 +1446,9 @@ def instance_device_type(instance: dict[str, Any]) -> str:
 
 def instance_public(instance: dict[str, Any]) -> dict[str, Any]:
     device_type = instance_device_type(instance)
+    instance_id = clean_text(instance.get("id"), "dr154-1")
     return {
-        "id": clean_text(instance.get("id"), "dr154-1"),
+        "id": instance_id,
         "name": clean_text(instance.get("name"), "dr154-1"),
         "deviceType": device_type,
         "device": device_type_public(device_type),
@@ -1394,8 +1456,9 @@ def instance_public(instance: dict[str, Any]) -> dict[str, Any]:
         "boards": instance.get("boards", []),
         "mqtt": instance_runtime_mqtt(instance),
         "auth": instance_auth_meta(instance),
+        "assignedUserIds": fetch_instance_user_ids(instance_id),
         "updatedAt": instance.get("updatedAt"),
-        "controlUrl": instance_control_url(clean_text(instance.get("id"), "dr154-1")),
+        "controlUrl": instance_control_url(instance_id),
     }
 
 
@@ -3807,6 +3870,23 @@ def api_config_update_instance(instance_id: str):
     if auth_error is not None:
         return auth_error
     return api_update_instance(instance_id)
+
+
+@app.put("/api/config/instances/<instance_id>/users")
+def api_config_update_instance_users(instance_id: str):
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
+    with STORE_LOCK:
+        store = load_store()
+        instance = find_instance(store, instance_id)
+    if instance is None:
+        return err("Istanza non trovata", 404)
+    instance_id_real = clean_text(instance.get("id"), slugify(instance_id, "dr154-1"))
+    user_ids = body.get("userIds") if isinstance(body.get("userIds"), list) else []
+    assigned_ids = set_instance_user_assignments(instance_id_real, [clean_text(value, "") for value in user_ids])
+    return jsonify({"ok": True, "instanceId": instance_id_real, "userIds": assigned_ids})
 
 
 @app.delete("/api/config/instances/<instance_id>")

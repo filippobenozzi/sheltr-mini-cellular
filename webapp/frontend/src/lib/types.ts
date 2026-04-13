@@ -84,6 +84,7 @@ export type InstancePublic = {
   boards: Board[]
   mqtt: InstanceMqtt
   auth?: InstanceAuthMeta
+  assignedUserIds?: string[]
   updatedAt?: string
   controlUrl?: string
 }
