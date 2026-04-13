@@ -41,14 +41,8 @@ export function AppShell({
   variant = "default",
 }: AppShellProps) {
   return (
-    <div className="page-shell relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(15,23,42,0.08),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(148,163,184,0.14),transparent_28%)]" />
-      <div
-        className={cn(
-          "page-container relative",
-          variant === "full" && "max-w-none gap-0 px-0 py-0 md:px-0 lg:px-0"
-        )}
-      >
+    <div className={cn("page-shell relative overflow-hidden", variant === "full" && "page-shell-flat")}>
+      <div className={cn(variant === "full" ? "relative flex w-full flex-col" : "page-container relative")}>
         {showHeader ? (
           <header className="rounded-[1.75rem] border bg-background/95 p-5 shadow-sm backdrop-blur md:p-6">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">

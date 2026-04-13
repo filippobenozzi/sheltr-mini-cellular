@@ -930,12 +930,6 @@ export function ConfigPage() {
   const transport = editor ? transportFromEditor(editor, mqttBaseTopic) : null
   const associatedDevices = editor ? associatedDevicesFromBoards(editor.boards) : []
   const pageTitle = listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
-  const pageDescription = listView
-    ? "Elenco completo delle istanze Sheltr Cloud. Apri Config per entrare nell’editor della singola istanza."
-    : editor
-      ? "Modifica i dati principali dell’istanza, salva e poi pubblica o sincronizza il dispositivo."
-      : "Caricamento configurazione istanza in corso."
-
   return (
     <AppShell
       title="Configurazione"
@@ -976,16 +970,11 @@ export function ConfigPage() {
       ) : (
         <>
           <SidebarProvider defaultOpen>
-            <Sidebar collapsible="offcanvas">
+            <Sidebar collapsible="icon">
               <SidebarHeader className="border-b border-sidebar-border p-3">
-                <div className="flex items-center gap-3 overflow-hidden rounded-xl px-2 py-1">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-sidebar-border bg-sidebar-accent">
-                    <img src="/static/logo.svg" alt="Sheltr" className="size-5" />
-                  </div>
-                  <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-xs font-medium uppercase tracking-[0.24em] text-sidebar-foreground/60">Sheltr Cloud</p>
-                    <p className="truncate text-sm font-semibold text-sidebar-foreground">Config Console</p>
-                  </div>
+                <div className="space-y-1 overflow-hidden px-2 py-1 group-data-[collapsible=icon]:hidden">
+                  <p className="text-xs font-medium uppercase tracking-[0.24em] text-sidebar-foreground/60">Sheltr Cloud</p>
+                  <p className="truncate text-sm font-semibold text-sidebar-foreground">Configuration</p>
                 </div>
               </SidebarHeader>
 
@@ -995,45 +984,28 @@ export function ConfigPage() {
                   <SidebarGroupContent>
                     <SidebarMenu>
                       <SidebarMenuItem>
-                        <SidebarMenuButton type="button" isActive={createOpen} onClick={() => setCreateOpen(true)}>
+                        <SidebarMenuButton
+                          type="button"
+                          isActive={createOpen}
+                          tooltip="Aggiungi istanza"
+                          onClick={() => setCreateOpen(true)}
+                        >
                           <Plus />
-                          <span>Aggiungi istanza</span>
+                          <span className="group-data-[collapsible=icon]:hidden">Aggiungi istanza</span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                       <SidebarMenuItem>
-                        <SidebarMenuButton type="button" isActive={listView} onClick={() => navigate("/config")}>
+                        <SidebarMenuButton
+                          type="button"
+                          isActive={listView}
+                          tooltip="Istanze"
+                          onClick={() => navigate("/config")}
+                        >
                           <LayoutList />
-                          <span>Istanze</span>
+                          <span className="group-data-[collapsible=icon]:hidden">Istanze</span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-
-                <SidebarSeparator />
-
-                <SidebarGroup>
-                  <SidebarGroupLabel>Contesto</SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <div className="space-y-3 px-2 group-data-[collapsible=icon]:hidden">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium text-sidebar-foreground">Vista corrente</p>
-                        <p className="text-sm leading-6 text-sidebar-foreground/70">{pageDescription}</p>
-                      </div>
-
-                      {editor ? (
-                        <div className="space-y-3 rounded-2xl border border-sidebar-border bg-sidebar-accent/50 p-3">
-                          <div className="space-y-1">
-                            <p className="text-sm font-medium text-sidebar-foreground">{editor.name}</p>
-                            <p className="font-mono text-xs text-sidebar-foreground/60">{editor.id}</p>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Badge variant="outline">{cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}</Badge>
-                            <Badge variant="outline">{isMini ? `AUTO (${associatedDevices.length})` : `${editor.boards.length} schede`}</Badge>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
                   </SidebarGroupContent>
                 </SidebarGroup>
               </SidebarContent>
@@ -1042,18 +1014,18 @@ export function ConfigPage() {
                 <SidebarMenu>
                   {configAuthRequired ? (
                     <SidebarMenuItem>
-                      <SidebarMenuButton type="button" onClick={configLogout}>
+                      <SidebarMenuButton type="button" tooltip="Logout config" onClick={configLogout}>
                         <LogOut />
-                        <span>Logout config</span>
+                        <span className="group-data-[collapsible=icon]:hidden">Logout config</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ) : null}
                   {editor ? (
                     <SidebarMenuItem>
-                      <SidebarMenuButton asChild>
+                      <SidebarMenuButton asChild tooltip="Apri controllo">
                         <Link to={controlUrl(editor.id)}>
                           <ExternalLink />
-                          <span>Apri controllo</span>
+                          <span className="group-data-[collapsible=icon]:hidden">Apri controllo</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -1063,7 +1035,7 @@ export function ConfigPage() {
               <SidebarRail />
             </Sidebar>
 
-            <SidebarInset className="min-w-0">
+            <SidebarInset className="min-w-0 w-full">
               <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-6">
                 <div className="flex min-w-0 items-center gap-3">
                   <SidebarTrigger className="rounded-full" />
@@ -1091,8 +1063,8 @@ export function ConfigPage() {
                 </nav>
               </header>
 
-              <div className="flex min-w-0 flex-1 flex-col gap-6 px-4 py-6 md:px-6">
-                <div className="w-full min-w-0 space-y-6">
+              <div className="flex min-w-0 w-full flex-1 flex-col gap-6 px-4 py-6 md:px-6">
+                <div className="w-full min-w-0 max-w-none space-y-6">
                   {note.text ? (
                     <Alert variant={note.error ? "destructive" : "default"}>
                       <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
