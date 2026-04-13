@@ -39,8 +39,10 @@ export function NotificationCenter() {
             <div className="flex items-start gap-3 pr-8">
               <div className="mt-0.5 shrink-0">{notificationIcon(item.tone)}</div>
               <div className="min-w-0">
-                <AlertTitle>{item.title}</AlertTitle>
-                <AlertDescription>{item.description}</AlertDescription>
+                {item.title ? <AlertTitle>{item.title}</AlertTitle> : null}
+                <AlertDescription className={item.title ? undefined : "text-[0.95rem] font-medium"}>
+                  {item.description}
+                </AlertDescription>
               </div>
             </div>
             <Button

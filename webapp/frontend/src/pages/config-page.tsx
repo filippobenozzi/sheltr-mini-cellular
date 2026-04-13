@@ -628,18 +628,18 @@ export function ConfigPage() {
 
   function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
     if (error) {
-      notify({ title: "Attenzione", description: text, tone: "destructive" })
+      notify({ description: text, tone: "destructive" })
       return
     }
     if (tone === "info") {
-      notify({ title: "Info", description: text, tone: "info" })
+      notify({ description: text, tone: "info" })
       return
     }
     if (tone === "warning") {
-      notify({ title: "Avviso", description: text, tone: "warning" })
+      notify({ description: text, tone: "warning" })
       return
     }
-    notify({ title: "Operazione completata", description: text, tone: "success" })
+    notify({ description: text, tone: "success" })
   }
 
   function handleConfigAuthError(error: unknown) {
@@ -958,34 +958,33 @@ export function ConfigPage() {
       showFooter={false}
     >
       {!configAllowed ? (
-        <Card className="mx-auto w-full max-w-xl border-border/80 bg-background/90">
-          <CardHeader>
-            <CardTitle>Login configurazione</CardTitle>
-            <CardDescription>
-              Usa le credenziali impostate in `.env` tramite `CONFIG_AUTH_USERNAME` e `CONFIG_AUTH_PASSWORD`.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Username config</Label>
-              <Input value={configUser} onChange={(event) => setConfigUser(event.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Password config</Label>
-              <Input
-                type="password"
-                value={configPass}
-                onChange={(event) => setConfigPass(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void configLogin()
-                  }
-                }}
-              />
-            </div>
-            <Button onClick={configLogin}>Accedi</Button>
-          </CardContent>
-        </Card>
+        <div className="flex min-h-screen items-center justify-center px-4 py-8">
+          <Card className="w-full max-w-md border-border/80 bg-background shadow-none">
+            <CardHeader>
+              <CardTitle>Login</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Username config</Label>
+                <Input value={configUser} onChange={(event) => setConfigUser(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Password config</Label>
+                <Input
+                  type="password"
+                  value={configPass}
+                  onChange={(event) => setConfigPass(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      void configLogin()
+                    }
+                  }}
+                />
+              </div>
+              <Button onClick={configLogin}>Accedi</Button>
+            </CardContent>
+          </Card>
+        </div>
       ) : (
         <>
           <SidebarProvider defaultOpen>

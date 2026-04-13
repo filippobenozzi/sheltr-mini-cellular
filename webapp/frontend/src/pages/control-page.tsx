@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { LogOut, RefreshCw, Settings2, Star } from "lucide-react"
+import { ArrowLeft, LogOut, RefreshCw, Settings2, Star } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
 import {
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Slider } from "@/components/ui/slider"
 import {
   Select,
   SelectContent,
@@ -269,18 +270,18 @@ export function ControlPage() {
 
   function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
     if (error) {
-      notify({ title: "Attenzione", description: text, tone: "destructive" })
+      notify({ description: text, tone: "destructive" })
       return
     }
     if (tone === "info") {
-      notify({ title: "Info", description: text, tone: "info" })
+      notify({ description: text, tone: "info" })
       return
     }
     if (tone === "warning") {
-      notify({ title: "Avviso", description: text, tone: "warning" })
+      notify({ description: text, tone: "warning" })
       return
     }
-    notify({ title: "Operazione completata", description: text, tone: "success" })
+    notify({ description: text, tone: "success" })
   }
 
   function profileOf(kind: ProfileKind, id: string) {
@@ -416,7 +417,6 @@ export function ControlPage() {
               if (cancelled) return
               setStatus(restored)
               setLastUpdatedLabel(`ultimo update: ${new Date().toLocaleTimeString("it-IT")}`)
-              showNote("Sessione ripristinata.", false, "info")
               return
             } catch (caught) {
               localStorage.removeItem(tokenKey(resolvedId))
@@ -924,15 +924,18 @@ export function ControlPage() {
   function renderThermostatTile(thermostat: StatusRoom["thermostats"][number], roomName: string, showRoomName = false) {
     const busyId = `thermostat-${thermostat.id}`
     const setpoint = Number.isFinite(Number(thermostat.setpoint)) ? Number(thermostat.setpoint) : 21
+    const sliderValue = [setpoint]
 
     return (
       <Card key={`thermostat-${roomName}-${thermostat.id}`} className="border-border/70 shadow-none">
         <CardContent className="space-y-4 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
-              <h3 className="truncate font-semibold">{thermostat.name}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="truncate font-semibold">{thermostat.name}</h3>
+                <span className="shrink-0 text-xs text-muted-foreground">{formatTemperature(thermostat.temperature)}</span>
+              </div>
               {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
-              <p className="text-xs text-muted-foreground">{formatTemperature(thermostat.temperature)}</p>
             </div>
             <div className="flex items-center gap-1">
               <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("thermostat", thermostat.id)}>
@@ -977,15 +980,15 @@ export function ControlPage() {
               ESTATE
             </Button>
           </div>
-          <div className="space-y-2">
-            <Input
-              type="range"
+          <div className="flex items-center gap-3">
+            <Slider
               min={5}
               max={30}
               step={0.5}
-              value={setpoint}
-              onChange={(event) => {
-                const nextValue = Number(event.target.value)
+              value={sliderValue}
+              className="flex-1"
+              onValueChange={(values) => {
+                const nextValue = Number(values[0] ?? setpoint)
                 setStatus((current) => {
                   if (!current) return current
                   const next = cloneValue(current)
@@ -999,8 +1002,8 @@ export function ControlPage() {
                 })
               }}
             />
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">{setpoint.toFixed(1)} C</span>
+            <span className="shrink-0 text-sm font-medium">{setpoint.toFixed(1)} C</span>
+            <div className="shrink-0">
               <Button
                 type="button"
                 size="sm"
@@ -1089,6 +1092,9 @@ export function ControlPage() {
     ])
     .sort((left, right) => left.order - right.order)
 
+  const showLoginScreen = !loading && Boolean(instance) && requiresLogin
+  const showControlHeader = !showLoginScreen
+
   return (
     <AppShell
       title={instance ? instance.name : "Controllo istanza"}
@@ -1098,56 +1104,73 @@ export function ControlPage() {
       showFooter={false}
     >
       <div className="min-h-screen">
-        <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
-            <div className="min-w-0 space-y-1">
-              <Breadcrumb>
-                <BreadcrumbList className="text-xs">
-                  <BreadcrumbItem>
-                    {instance ? (
-                      selectedRoom ? (
-                        <BreadcrumbLink asChild>
-                          <Link to={controlUrl(instance.id)}>{instance.name}</Link>
-                        </BreadcrumbLink>
+        {showControlHeader ? (
+          <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
+              <div className="min-w-0 space-y-1">
+                <Breadcrumb>
+                  <BreadcrumbList className="text-xs">
+                    <BreadcrumbItem>
+                      {instance ? (
+                        selectedRoom ? (
+                          <BreadcrumbLink asChild>
+                            <Link to={controlUrl(instance.id)}>{instance.name}</Link>
+                          </BreadcrumbLink>
+                        ) : (
+                          <BreadcrumbPage>{instance.name}</BreadcrumbPage>
+                        )
                       ) : (
-                        <BreadcrumbPage>{instance.name}</BreadcrumbPage>
-                      )
-                    ) : (
-                      <BreadcrumbPage>Controllo</BreadcrumbPage>
-                    )}
-                  </BreadcrumbItem>
-                  {selectedRoom ? (
-                    <>
-                      <BreadcrumbSeparator />
-                      <BreadcrumbItem>
-                        <BreadcrumbPage>{selectedRoom.name}</BreadcrumbPage>
-                      </BreadcrumbItem>
-                    </>
-                  ) : null}
-                </BreadcrumbList>
-              </Breadcrumb>
-              <h1 className="truncate text-lg font-semibold tracking-tight md:text-xl">
-                {selectedRoom?.name || instance?.name || "Controllo istanza"}
-              </h1>
-              <p className="text-xs text-muted-foreground">{lastUpdatedLabel || "ultimo update --"}</p>
-            </div>
+                        <BreadcrumbPage>Controllo</BreadcrumbPage>
+                      )}
+                    </BreadcrumbItem>
+                    {selectedRoom ? (
+                      <>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                          <BreadcrumbPage>{selectedRoom.name}</BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </>
+                    ) : null}
+                  </BreadcrumbList>
+                </Breadcrumb>
+                <h1 className="truncate text-lg font-semibold tracking-tight md:text-xl">
+                  {selectedRoom?.name || instance?.name || "Controllo istanza"}
+                </h1>
+                <p className="text-xs text-muted-foreground">{lastUpdatedLabel || "ultimo update --"}</p>
+                {selectedRoom && instance ? (
+                  <div>
+                    <Button asChild type="button" variant="ghost" size="sm" className="mt-1 h-7 px-2 rounded-md">
+                      <Link to={controlUrl(instance.id)}>
+                        <ArrowLeft className="size-4" />
+                        Indietro
+                      </Link>
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" size="sm" className="rounded-md" onClick={() => void loadStatus(true, false)}>
-                <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
-                Aggiorna
-              </Button>
-              {authRequired ? (
-                <Button type="button" variant="ghost" size="sm" className="rounded-md" onClick={logout}>
-                  <LogOut className="size-4" />
-                  Logout
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" className="rounded-md" onClick={() => void loadStatus(true, false)}>
+                  <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+                  Aggiorna
                 </Button>
-              ) : null}
+                {authRequired ? (
+                  <Button type="button" variant="ghost" size="sm" className="rounded-md" onClick={logout}>
+                    <LogOut className="size-4" />
+                    Logout
+                  </Button>
+                ) : null}
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
+        ) : null}
 
-        <main className="space-y-8 px-4 py-6 md:px-6">
+        <main
+          className={cn(
+            "px-4 py-6 md:px-6",
+            showLoginScreen ? "flex min-h-screen items-center justify-center" : "space-y-8"
+          )}
+        >
           {loading ? <p className="text-sm text-muted-foreground">Caricamento dashboard in corso...</p> : null}
 
           {!loading && !instance ? (
@@ -1157,11 +1180,8 @@ export function ControlPage() {
           ) : null}
 
           {!loading && instance && requiresLogin ? (
-            <section className="max-w-md space-y-4">
-              <div className="space-y-1">
-                <h2 className="text-xl font-semibold tracking-tight">Login istanza</h2>
-                <p className="text-sm text-muted-foreground">Usa le credenziali configurate per questa istanza.</p>
-              </div>
+            <section className="w-full max-w-md space-y-4">
+              <h2 className="text-xl font-semibold tracking-tight">Login</h2>
               <div className="space-y-4 rounded-2xl border border-border/80 bg-background p-5 shadow-none">
                 <div className="space-y-2">
                   <Label>Username</Label>
@@ -1201,10 +1221,7 @@ export function ControlPage() {
                 <>
                   {favoriteTiles.length ? (
                     <section className="space-y-4">
-                      <div className="space-y-1">
-                        <h2 className="text-xl font-semibold tracking-tight">Preferiti</h2>
-                        <p className="text-sm text-muted-foreground">Comandi evidenziati per accesso rapido.</p>
-                      </div>
+                      <h2 className="text-xl font-semibold tracking-tight">Preferiti</h2>
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         {favoriteTiles.map((item) => item.node)}
                       </div>
@@ -1212,10 +1229,7 @@ export function ControlPage() {
                   ) : null}
 
                   <section className="space-y-4">
-                    <div className="space-y-1">
-                      <h2 className="text-xl font-semibold tracking-tight">Stanze</h2>
-                      <p className="text-sm text-muted-foreground">Apri una stanza per vedere solo i suoi comandi.</p>
-                    </div>
+                    <h2 className="text-xl font-semibold tracking-tight">Stanze</h2>
                     {rooms.length ? (
                       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                         {rooms.map((room) => (

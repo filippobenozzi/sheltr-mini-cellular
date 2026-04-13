@@ -2,7 +2,7 @@ export type NotificationTone = "success" | "info" | "warning" | "destructive"
 
 export type NotificationItem = {
   id: string
-  title: string
+  title?: string
   description: string
   tone: NotificationTone
   duration: number
@@ -46,7 +46,7 @@ export function dismissNotification(id: string) {
 }
 
 export function notify(input: {
-  title: string
+  title?: string
   description: string
   tone?: NotificationTone
   duration?: number
