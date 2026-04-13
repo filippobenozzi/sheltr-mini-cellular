@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { Copy, ExternalLink, LayoutList, LogOut, Plus, RefreshCw, Save, Settings2, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { AppShell } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -90,11 +91,6 @@ type EditorInstance = {
     password: string
     clearPassword: boolean
   }
-}
-
-type NoteState = {
-  text: string
-  error: boolean
 }
 
 type ConfigInstancesResponse = {
@@ -629,10 +625,21 @@ export function ConfigPage() {
   const [newDeviceType, setNewDeviceType] = useState<DeviceType>(DEFAULT_DEVICE_TYPE)
   const [createOpen, setCreateOpen] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [note, setNote] = useState<NoteState>({ text: "", error: false })
 
-  function showNote(text: string, error = false) {
-    setNote({ text, error })
+  function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
+    if (error) {
+      toast.error(text)
+      return
+    }
+    if (tone === "info") {
+      toast.info(text)
+      return
+    }
+    if (tone === "warning") {
+      toast.warning(text)
+      return
+    }
+    toast.success(text)
   }
 
   function handleConfigAuthError(error: unknown) {
@@ -701,7 +708,7 @@ export function ConfigPage() {
           setEditor(null)
           setCurrentId("")
           setLoading(false)
-          showNote("Login configurazione richiesto.")
+          showNote("Login configurazione richiesto.", false, "info")
           return
         }
 
@@ -929,7 +936,7 @@ export function ConfigPage() {
     setEditor(null)
     setCurrentId("")
     navigate("/config", { replace: true })
-    showNote("Logout configurazione eseguito.")
+    showNote("Logout configurazione eseguito.", false, "info")
   }
 
   function updateEditor(next: EditorInstance | null) {
@@ -1048,7 +1055,7 @@ export function ConfigPage() {
             </Sidebar>
 
             <SidebarInset className="min-w-0 w-full">
-              <header className="sticky top-0 z-30 flex h-16 shrink-0 items-stretch justify-between gap-2 border-b bg-background/95 px-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90 md:h-20 md:px-6">
+              <header className="sticky top-0 z-30 flex h-16 shrink-0 items-stretch justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/90 md:h-20 md:px-6">
                 <div className="flex min-w-0 items-stretch gap-2 self-stretch">
                   <div className="flex items-center">
                     <SidebarTrigger className="size-8 rounded-full" />
@@ -1093,6 +1100,12 @@ export function ConfigPage() {
                         <Copy className="size-4" />
                         <span className="hidden sm:inline">Copia link</span>
                       </Button>
+                      <Button asChild size="sm" variant="outline" className="rounded-full">
+                        <a href={controlUrl(editor.id)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="size-4" />
+                          <span className="hidden sm:inline">Apri in nuova tab</span>
+                        </a>
+                      </Button>
                       <Button type="button" size="sm" className="rounded-full" onClick={requestSaveCurrent}>
                         <Save className="size-4" />
                         <span className="hidden sm:inline">Salva</span>
@@ -1121,13 +1134,6 @@ export function ConfigPage() {
 
               <div className="flex min-w-0 w-full flex-1 flex-col gap-6 px-4 py-6 md:px-6">
                 <div className="w-full min-w-0 max-w-none space-y-6">
-                  {note.text ? (
-                    <Alert variant={note.error ? "destructive" : "default"}>
-                      <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
-                      <AlertDescription>{note.text}</AlertDescription>
-                    </Alert>
-                  ) : null}
-
                   {loading ? <p className="text-sm text-muted-foreground">Caricamento configurazione in corso...</p> : null}
 
                   {!loading && listView ? (

@@ -41,7 +41,12 @@ export function AppShell({
   variant = "default",
 }: AppShellProps) {
   return (
-    <div className={cn("page-shell relative overflow-hidden", variant === "full" && "page-shell-flat")}>
+    <div
+      className={cn(
+        "page-shell relative",
+        variant === "full" ? "page-shell-flat overflow-x-hidden" : "overflow-hidden"
+      )}
+    >
       <div className={cn(variant === "full" ? "relative flex w-full flex-col" : "page-container relative")}>
         {showHeader ? (
           <header className="rounded-[1.75rem] border bg-background/95 p-5 shadow-sm backdrop-blur md:p-6">

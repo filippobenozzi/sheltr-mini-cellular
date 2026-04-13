@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { LogOut, RefreshCw, Settings2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { AppShell } from "@/components/app-shell"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -50,11 +50,6 @@ import type {
 } from "@/lib/types"
 
 type ProfileKind = "thermostat" | "light" | "shutter"
-
-type NoteState = {
-  text: string
-  error: boolean
-}
 
 type ProfilesState = {
   thermostat: Record<string, ThermostatProfile>
@@ -234,7 +229,6 @@ export function ControlPage() {
   const [busyKeys, setBusyKeys] = useState<string[]>([])
   const [nowLabel, setNowLabel] = useState("")
   const [lastUpdatedLabel, setLastUpdatedLabel] = useState("")
-  const [note, setNote] = useState<NoteState>({ text: "", error: false })
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileKind, setProfileKind] = useState<ProfileKind>("thermostat")
   const [profileId, setProfileId] = useState("")
@@ -243,8 +237,20 @@ export function ControlPage() {
     entries: [],
   })
 
-  function showNote(text: string, error = false) {
-    setNote({ text, error })
+  function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
+    if (error) {
+      toast.error(text)
+      return
+    }
+    if (tone === "info") {
+      toast.info(text)
+      return
+    }
+    if (tone === "warning") {
+      toast.warning(text)
+      return
+    }
+    toast.success(text)
   }
 
   function profileOf(kind: ProfileKind, id: string) {
@@ -291,7 +297,7 @@ export function ControlPage() {
             true
           )
         } else {
-          showNote("Stato aggiornato")
+          showNote("Stato aggiornato", false, "info")
         }
       }
       return true
@@ -358,18 +364,18 @@ export function ControlPage() {
               if (cancelled) return
               setStatus(restored)
               setLastUpdatedLabel(`ultimo update: ${new Date().toLocaleTimeString("it-IT")}`)
-              showNote("Sessione ripristinata.")
+              showNote("Sessione ripristinata.", false, "info")
               return
             } catch (caught) {
               localStorage.removeItem(tokenKey(resolvedId))
               setToken("")
               if (!handleAuthError(caught)) {
-                showNote("Login richiesto per questa istanza.")
+                showNote("Login richiesto per questa istanza.", false, "warning")
               }
             }
           } else {
             setToken("")
-            showNote("Login richiesto per questa istanza.")
+            showNote("Login richiesto per questa istanza.", false, "warning")
           }
         } else {
           setToken("")
@@ -377,7 +383,7 @@ export function ControlPage() {
           if (cancelled) return
           setStatus(ok)
           setLastUpdatedLabel(`ultimo update: ${new Date().toLocaleTimeString("it-IT")}`)
-          showNote("Stato aggiornato")
+          showNote("Stato aggiornato", false, "info")
         }
       } catch (caught) {
         if (!cancelled) {
@@ -443,12 +449,12 @@ export function ControlPage() {
     localStorage.removeItem(tokenKey(instanceId))
     setStatus(null)
     setLoginPass("")
-    showNote("Logout eseguito.")
+    showNote("Logout eseguito.", false, "info")
   }
 
   async function executeCommand(commandKey: string, path: string, payload: Record<string, unknown>, okMessage: string) {
     setBusyKeys((current) => [...current, commandKey])
-    showNote("In attesa di risposta...")
+    showNote("In attesa di risposta...", false, "info")
     try {
       const response = await apiJson<CommandResponse>(path, {
         method: "POST",
@@ -1108,13 +1114,6 @@ export function ControlPage() {
           ) : null}
         </div>
       </section>
-
-      {note.text ? (
-        <Alert variant={note.error ? "destructive" : "default"}>
-          <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
-          <AlertDescription>{note.text}</AlertDescription>
-        </Alert>
-      ) : null}
 
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
         <DialogContent className="max-w-3xl">
