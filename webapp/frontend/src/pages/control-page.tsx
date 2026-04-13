@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { LogOut, RefreshCw, Settings2 } from "lucide-react"
+import { LogOut, RefreshCw, Settings2, Star } from "lucide-react"
 import { toast } from "sonner"
 
 import { AppShell } from "@/components/app-shell"
-import { Badge } from "@/components/ui/badge"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -37,7 +44,7 @@ import {
   normalizeThermostatProfile,
 } from "@/lib/device"
 import { applyControlPwaIdentity, registerControlPwa } from "@/lib/pwa"
-import { cleanText, clamp, normalizeMode, normalizeTime, slugify } from "@/lib/utils"
+import { cleanText, clamp, cn, normalizeMode, normalizeTime, slugify } from "@/lib/utils"
 import type {
   Board,
   CommandResponse,
@@ -50,6 +57,7 @@ import type {
 } from "@/lib/types"
 
 type ProfileKind = "thermostat" | "light" | "shutter"
+type FavoriteKind = "light" | "dimmer" | "shutter" | "thermostat"
 
 type ProfilesState = {
   thermostat: Record<string, ThermostatProfile>
@@ -67,6 +75,26 @@ function tokenKey(instanceId: string) {
 
 function controlUrl(instanceId: string) {
   return `/control/${encodeURIComponent(instanceId)}`
+}
+
+function roomSlug(roomName: string) {
+  return slugify(roomName, "room")
+}
+
+function roomViewUrl(instanceId: string, roomName?: string) {
+  const base = controlUrl(instanceId)
+  if (!roomName) {
+    return base
+  }
+  return `${base}?room=${encodeURIComponent(roomSlug(roomName))}`
+}
+
+function favoriteStorageKey(instanceId: string) {
+  return `sheltr-control-favorites-${instanceId}`
+}
+
+function favoriteEntityKey(kind: FavoriteKind, id: string) {
+  return `${kind}:${id}`
 }
 
 function forcedInstanceFromLocation(pathname: string, search: string) {
@@ -118,18 +146,6 @@ function setProfileInBoards(
     }
   }
   return false
-}
-
-function collectIds(status: InstanceStatus | null, key: "lights" | "dimmers") {
-  const ids: string[] = []
-  for (const room of status?.rooms ?? []) {
-    for (const item of room[key] ?? []) {
-      if (item?.id) {
-        ids.push(String(item.id))
-      }
-    }
-  }
-  return ids
 }
 
 function applySentState(status: InstanceStatus | null, sent: CommandSentItem[]) {
@@ -206,8 +222,23 @@ function formatTemperature(value?: number | null) {
   return `${Number(value).toFixed(1)} C`
 }
 
+function roomEntityCount(room: StatusRoom) {
+  return room.lights.length + room.dimmers.length + room.shutters.length + room.thermostats.length
+}
+
 function roomHasEntities(room: StatusRoom) {
-  return Boolean(room.lights.length || room.dimmers.length || room.shutters.length || room.thermostats.length)
+  return roomEntityCount(room) > 0
+}
+
+function roomSummary(room: StatusRoom) {
+  const parts = [
+    room.lights.length ? `${room.lights.length} luci` : "",
+    room.dimmers.length ? `${room.dimmers.length} dimmer` : "",
+    room.shutters.length ? `${room.shutters.length} tapparelle` : "",
+    room.thermostats.length ? `${room.thermostats.length} termostati` : "",
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(" • ") : "Nessun comando"
 }
 
 export function ControlPage() {
@@ -225,10 +256,9 @@ export function ControlPage() {
   const [loginPass, setLoginPass] = useState("")
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [bulkRunning, setBulkRunning] = useState(false)
   const [busyKeys, setBusyKeys] = useState<string[]>([])
-  const [nowLabel, setNowLabel] = useState("")
   const [lastUpdatedLabel, setLastUpdatedLabel] = useState("")
+  const [favorites, setFavorites] = useState<string[]>([])
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileKind, setProfileKind] = useState<ProfileKind>("thermostat")
   const [profileId, setProfileId] = useState("")
@@ -258,6 +288,21 @@ export function ControlPage() {
       return profiles.thermostat[id] ?? normalizeThermostatProfile({})
     }
     return profiles[kind][id] ?? normalizeSwitchProfile(kind, {})
+  }
+
+  function isFavorite(kind: FavoriteKind, id: string) {
+    return favorites.includes(favoriteEntityKey(kind, id))
+  }
+
+  function toggleFavorite(kind: FavoriteKind, id: string) {
+    const key = favoriteEntityKey(kind, id)
+    setFavorites((current) => {
+      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+      if (instanceId) {
+        localStorage.setItem(favoriteStorageKey(instanceId), JSON.stringify(next))
+      }
+      return next
+    })
   }
 
   function handleAuthError(error: unknown) {
@@ -312,11 +357,18 @@ export function ControlPage() {
   }
 
   useEffect(() => {
-    const tick = () => setNowLabel(new Date().toLocaleString("it-IT"))
-    tick()
-    const timer = window.setInterval(tick, 1000)
-    return () => window.clearInterval(timer)
-  }, [])
+    if (!instanceId) {
+      setFavorites([])
+      return
+    }
+    try {
+      const stored = localStorage.getItem(favoriteStorageKey(instanceId))
+      const parsed = stored ? JSON.parse(stored) : []
+      setFavorites(Array.isArray(parsed) ? parsed.map((item) => String(item)) : [])
+    } catch {
+      setFavorites([])
+    }
+  }, [instanceId])
 
   useEffect(() => {
     let cancelled = false
@@ -486,64 +538,6 @@ export function ControlPage() {
     }
   }
 
-  async function sendAll(action: "on" | "off") {
-    if (!instanceId || bulkRunning) {
-      return
-    }
-    setBulkRunning(true)
-    let ok = 0
-    let ko = 0
-    let authExpired = false
-    try {
-      for (const lightId of collectIds(status, "lights")) {
-        try {
-          await apiJson(`/api/instances/${encodeURIComponent(instanceId)}/lights/command`, {
-            method: "POST",
-            body: { lightId, action },
-            tokenConfig: instanceTokenConfig(token),
-          })
-          ok += 1
-        } catch (caught) {
-          if (handleAuthError(caught)) {
-            authExpired = true
-            break
-          }
-          ko += 1
-        }
-      }
-      if (authExpired) {
-        return
-      }
-      for (const dimmerId of collectIds(status, "dimmers")) {
-        try {
-          await apiJson(`/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`, {
-            method: "POST",
-            body: { dimmerId, action },
-            tokenConfig: instanceTokenConfig(token),
-          })
-          ok += 1
-        } catch (caught) {
-          if (handleAuthError(caught)) {
-            authExpired = true
-            break
-          }
-          ko += 1
-        }
-      }
-      if (authExpired) {
-        return
-      }
-      if (!ok && !ko) {
-        showNote("Nessuna entita da comandare", true)
-      } else {
-        showNote(`Comando globale '${action}': ${ok} ok${ko ? `, ${ko} errori` : ""}`, ko > 0)
-        await loadStatus(false, true)
-      }
-    } finally {
-      setBulkRunning(false)
-    }
-  }
-
   function openProfile(kind: ProfileKind, id: string) {
     setProfileKind(kind)
     setProfileId(id)
@@ -658,77 +652,523 @@ export function ControlPage() {
   }
 
   const requiresLogin = authRequired && !token
+  const selectedRoomSlug = cleanText(new URLSearchParams(location.search).get("room"), "")
+  const rooms = sortRoomItems(status?.rooms ?? [])
+  const selectedRoom = selectedRoomSlug ? rooms.find((room) => roomSlug(room.name) === selectedRoomSlug) ?? null : null
+
+  function renderFavoriteButton(kind: FavoriteKind, id: string) {
+    const active = isFavorite(kind, id)
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="rounded-full"
+        onClick={() => toggleFavorite(kind, id)}
+      >
+        <Star className={cn("size-4", active && "fill-yellow-400 text-yellow-500")} />
+      </Button>
+    )
+  }
+
+  function renderLightTile(light: StatusRoom["lights"][number], roomName: string, showRoomName = false) {
+    const busyId = `light-${light.id}`
+    const profileEnabled = profiles.light[light.id]?.enabled
+    return (
+      <Card key={`light-${roomName}-${light.id}`} className="border-border/70 shadow-none">
+        <CardContent className="space-y-4 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="truncate font-semibold">{light.name}</h3>
+              {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" onClick={() => openProfile("light", light.id)}>
+                <Settings2 className={cn("size-4", profileEnabled && "text-primary")} />
+              </Button>
+              {renderFavoriteButton("light", light.id)}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={cn(
+                "flex-1 rounded-full border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800",
+                light.isOn === true && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+              )}
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/lights/command`,
+                  { lightId: light.id, action: "on" },
+                  "Comando luce 'on'"
+                )
+              }
+            >
+              ON
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={cn(
+                "flex-1 rounded-full border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800",
+                light.isOn === false && "border-rose-600 bg-rose-600 text-white hover:bg-rose-700 hover:text-white"
+              )}
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/lights/command`,
+                  { lightId: light.id, action: "off" },
+                  "Comando luce 'off'"
+                )
+              }
+            >
+              OFF
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  function renderDimmerTile(dimmer: StatusRoom["dimmers"][number], roomName: string, showRoomName = false) {
+    const busyId = `dimmer-${dimmer.id}`
+    const level = Number.isFinite(Number(dimmer.level)) ? Math.max(0, Math.min(9, Math.round(Number(dimmer.level)))) : 0
+
+    return (
+      <Card key={`dimmer-${roomName}-${dimmer.id}`} className="border-border/70 shadow-none">
+        <CardContent className="space-y-4 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="truncate font-semibold">{dimmer.name}</h3>
+              {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-full"
+                onClick={() => showNote("Profili orari non disponibili per i dimmer.", false, "info")}
+              >
+                <Settings2 className="size-4 text-muted-foreground" />
+              </Button>
+              {renderFavoriteButton("dimmer", dimmer.id)}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={dimmer.isOn === true ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`,
+                  { dimmerId: dimmer.id, action: "on" },
+                  "Comando dimmer 'on'"
+                )
+              }
+            >
+              ON
+            </Button>
+            <Button
+              type="button"
+              variant={dimmer.isOn === false ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`,
+                  { dimmerId: dimmer.id, action: "off" },
+                  "Comando dimmer 'off'"
+                )
+              }
+            >
+              OFF
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <Input
+              type="range"
+              min={0}
+              max={9}
+              step={1}
+              value={level}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value)
+                setStatus((current) => {
+                  if (!current) return current
+                  const next = cloneValue(current)
+                  for (const roomItem of next.rooms) {
+                    const found = roomItem.dimmers.find((item) => item.id === dimmer.id)
+                    if (found) {
+                      found.level = nextValue
+                    }
+                  }
+                  return next
+                })
+              }}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">{level}</span>
+              <Button
+                type="button"
+                size="sm"
+                className="rounded-full"
+                disabled={busyKeys.includes(busyId)}
+                onClick={() =>
+                  void executeCommand(
+                    busyId,
+                    `/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`,
+                    { dimmerId: dimmer.id, action: "set", level },
+                    "Comando dimmer 'set'"
+                  )
+                }
+              >
+                SET
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  function renderShutterTile(shutter: StatusRoom["shutters"][number], roomName: string, showRoomName = false) {
+    const busyId = `shutter-${shutter.id}`
+    const profileEnabled = profiles.shutter[shutter.id]?.enabled
+
+    return (
+      <Card key={`shutter-${roomName}-${shutter.id}`} className="border-border/70 shadow-none">
+        <CardContent className="space-y-4 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="truncate font-semibold">{shutter.name}</h3>
+              {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" onClick={() => openProfile("shutter", shutter.id)}>
+                <Settings2 className={cn("size-4", profileEnabled && "text-primary")} />
+              </Button>
+              {renderFavoriteButton("shutter", shutter.id)}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={shutter.action === "up" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/shutters/command`,
+                  { shutterId: shutter.id, action: "up" },
+                  "Comando tapparella 'up'"
+                )
+              }
+            >
+              SU
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/shutters/command`,
+                  { shutterId: shutter.id, action: "stop" },
+                  "Comando tapparella 'stop'"
+                )
+              }
+            >
+              STOP
+            </Button>
+            <Button
+              type="button"
+              variant={shutter.action === "down" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/shutters/command`,
+                  { shutterId: shutter.id, action: "down" },
+                  "Comando tapparella 'down'"
+                )
+              }
+            >
+              GIU
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  function renderThermostatTile(thermostat: StatusRoom["thermostats"][number], roomName: string, showRoomName = false) {
+    const busyId = `thermostat-${thermostat.id}`
+    const setpoint = Number.isFinite(Number(thermostat.setpoint)) ? Number(thermostat.setpoint) : 21
+
+    return (
+      <Card key={`thermostat-${roomName}-${thermostat.id}`} className="border-border/70 shadow-none">
+        <CardContent className="space-y-4 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="truncate font-semibold">{thermostat.name}</h3>
+              {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
+              <p className="text-xs text-muted-foreground">{formatTemperature(thermostat.temperature)}</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" onClick={() => openProfile("thermostat", thermostat.id)}>
+                <Settings2 className={cn("size-4", profiles.thermostat[thermostat.id]?.enabled && "text-primary")} />
+              </Button>
+              {renderFavoriteButton("thermostat", thermostat.id)}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={thermostat.mode === "winter" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/thermostats/command`,
+                  { thermostatId: thermostat.id, mode: "winter" },
+                  "Comando termostato mode 'winter'"
+                )
+              }
+            >
+              INVERNO
+            </Button>
+            <Button
+              type="button"
+              variant={thermostat.mode === "summer" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              disabled={busyKeys.includes(busyId)}
+              onClick={() =>
+                void executeCommand(
+                  busyId,
+                  `/api/instances/${encodeURIComponent(instanceId)}/thermostats/command`,
+                  { thermostatId: thermostat.id, mode: "summer" },
+                  "Comando termostato mode 'summer'"
+                )
+              }
+            >
+              ESTATE
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <Input
+              type="range"
+              min={5}
+              max={30}
+              step={0.5}
+              value={setpoint}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value)
+                setStatus((current) => {
+                  if (!current) return current
+                  const next = cloneValue(current)
+                  for (const roomItem of next.rooms) {
+                    const found = roomItem.thermostats.find((item) => item.id === thermostat.id)
+                    if (found) {
+                      found.setpoint = nextValue
+                    }
+                  }
+                  return next
+                })
+              }}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">{setpoint.toFixed(1)} C</span>
+              <Button
+                type="button"
+                size="sm"
+                className="rounded-full"
+                disabled={busyKeys.includes(busyId)}
+                onClick={() =>
+                  void executeCommand(
+                    busyId,
+                    `/api/instances/${encodeURIComponent(instanceId)}/thermostats/command`,
+                    { thermostatId: thermostat.id, setpoint },
+                    "Comando termostato setpoint"
+                  )
+                }
+              >
+                SET
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  function renderRoomControls(room: StatusRoom) {
+    return (
+      <div className="space-y-8">
+        {room.lights.length ? (
+          <section className="space-y-4">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Luci</h2>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {sortRoomItems(room.lights).map((light) => renderLightTile(light, room.name))}
+            </div>
+          </section>
+        ) : null}
+
+        {room.dimmers.length ? (
+          <section className="space-y-4">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Dimmer</h2>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {sortRoomItems(room.dimmers).map((dimmer) => renderDimmerTile(dimmer, room.name))}
+            </div>
+          </section>
+        ) : null}
+
+        {room.shutters.length ? (
+          <section className="space-y-4">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Tapparelle</h2>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {sortRoomItems(room.shutters).map((shutter) => renderShutterTile(shutter, room.name))}
+            </div>
+          </section>
+        ) : null}
+
+        {room.thermostats.length ? (
+          <section className="space-y-4">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Termostati</h2>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {sortRoomItems(room.thermostats).map((thermostat) => renderThermostatTile(thermostat, room.name))}
+            </div>
+          </section>
+        ) : null}
+
+        {!roomHasEntities(room) ? <p className="text-sm text-muted-foreground">Nessun comando disponibile in questa stanza.</p> : null}
+      </div>
+    )
+  }
+
+  const favoriteTiles = rooms
+    .flatMap((room) => [
+      ...sortRoomItems(room.lights)
+        .filter((light) => isFavorite("light", light.id))
+        .map((light) => ({ key: favoriteEntityKey("light", light.id), order: favorites.indexOf(favoriteEntityKey("light", light.id)), node: renderLightTile(light, room.name, true) })),
+      ...sortRoomItems(room.dimmers)
+        .filter((dimmer) => isFavorite("dimmer", dimmer.id))
+        .map((dimmer) => ({ key: favoriteEntityKey("dimmer", dimmer.id), order: favorites.indexOf(favoriteEntityKey("dimmer", dimmer.id)), node: renderDimmerTile(dimmer, room.name, true) })),
+      ...sortRoomItems(room.shutters)
+        .filter((shutter) => isFavorite("shutter", shutter.id))
+        .map((shutter) => ({ key: favoriteEntityKey("shutter", shutter.id), order: favorites.indexOf(favoriteEntityKey("shutter", shutter.id)), node: renderShutterTile(shutter, room.name, true) })),
+      ...sortRoomItems(room.thermostats)
+        .filter((thermostat) => isFavorite("thermostat", thermostat.id))
+        .map((thermostat) => ({
+          key: favoriteEntityKey("thermostat", thermostat.id),
+          order: favorites.indexOf(favoriteEntityKey("thermostat", thermostat.id)),
+          node: renderThermostatTile(thermostat, room.name, true),
+        })),
+    ])
+    .sort((left, right) => left.order - right.order)
 
   return (
     <AppShell
       title={instance ? instance.name : "Controllo istanza"}
-      description="Dashboard controllo per stanze, luci, dimmer, tapparelle e termostati, con supporto ai profili orari salvati nell’istanza."
-      actions={
-        instanceId ? (
-          <>
-            <Button variant="outline" size="sm" className="rounded-full" onClick={() => void loadStatus(true, false)}>
-              <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
-              Aggiorna
-            </Button>
-            <Button variant="outline" size="sm" className="rounded-full" onClick={() => void sendAll("on")} disabled={bulkRunning}>
-              Accendi tutte
-            </Button>
-            <Button variant="outline" size="sm" className="rounded-full" onClick={() => void sendAll("off")} disabled={bulkRunning}>
-              Spegni tutte
-            </Button>
-            {authRequired ? (
-              <Button variant="ghost" size="sm" className="rounded-full" onClick={logout}>
-                <LogOut className="size-4" />
-                Logout
-              </Button>
-            ) : null}
-          </>
-        ) : null
-      }
+      description=""
+      variant="full"
+      showHeader={false}
+      showFooter={false}
     >
-      <section className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <div className="space-y-6">
-          <Card className="border-border/80 bg-background/90">
-            <CardHeader>
-              <CardTitle>Stato sessione</CardTitle>
-              <CardDescription>
-                {instance ? `${instance.name} (${instance.id})` : "Apri un URL controllo valido per caricare una istanza."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3">
-                <div className="rounded-2xl border bg-muted/30 p-4">
-                  <p className="text-sm text-muted-foreground">Ora locale</p>
-                  <p className="mt-1 text-base font-medium">{nowLabel || "--"}</p>
-                </div>
-                <div className="rounded-2xl border bg-muted/30 p-4">
-                  <p className="text-sm text-muted-foreground">Ultimo aggiornamento</p>
-                  <p className="mt-1 text-base font-medium">{lastUpdatedLabel || "--"}</p>
-                </div>
-              </div>
+      <div className="min-h-screen">
+        <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
+            <div className="min-w-0 space-y-1">
+              <Breadcrumb>
+                <BreadcrumbList className="text-xs">
+                  <BreadcrumbItem>
+                    <BreadcrumbLink asChild>
+                      <Link to="/">Home</Link>
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                  {instance ? (
+                    <>
+                      <BreadcrumbSeparator />
+                      <BreadcrumbItem>
+                        {selectedRoom ? (
+                          <BreadcrumbLink asChild>
+                            <Link to={controlUrl(instance.id)}>{instance.name}</Link>
+                          </BreadcrumbLink>
+                        ) : (
+                          <BreadcrumbPage>{instance.name}</BreadcrumbPage>
+                        )}
+                      </BreadcrumbItem>
+                    </>
+                  ) : null}
+                  {selectedRoom ? (
+                    <>
+                      <BreadcrumbSeparator />
+                      <BreadcrumbItem>
+                        <BreadcrumbPage>{selectedRoom.name}</BreadcrumbPage>
+                      </BreadcrumbItem>
+                    </>
+                  ) : null}
+                </BreadcrumbList>
+              </Breadcrumb>
+              <h1 className="truncate text-lg font-semibold tracking-tight md:text-xl">
+                {selectedRoom?.name || instance?.name || "Controllo istanza"}
+              </h1>
+              <p className="text-xs text-muted-foreground">{lastUpdatedLabel || "ultimo update --"}</p>
+            </div>
 
-              {instance ? (
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline">{instance.device?.label || instance.deviceType}</Badge>
-                  {authRequired ? <Badge variant="secondary">Login richiesto</Badge> : <Badge variant="secondary">Accesso diretto</Badge>}
-                </div>
-              ) : null}
-
-              {instanceId ? (
-                <Button asChild variant="outline" className="w-full">
-                  <Link to={`/instance/${encodeURIComponent(instanceId)}/config`}>Apri configurazione istanza</Link>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={() => void loadStatus(true, false)}>
+                <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+                Aggiorna
+              </Button>
+              {authRequired ? (
+                <Button type="button" variant="ghost" size="sm" className="rounded-full" onClick={logout}>
+                  <LogOut className="size-4" />
+                  Logout
                 </Button>
               ) : null}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
+        </header>
 
-          {requiresLogin ? (
-            <Card className="border-border/80 bg-background/90">
-              <CardHeader>
-                <CardTitle>Login istanza</CardTitle>
-                <CardDescription>Usa le credenziali impostate nella configurazione dell’istanza.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
+        <main className="space-y-8 px-4 py-6 md:px-6">
+          {loading ? <p className="text-sm text-muted-foreground">Caricamento dashboard in corso...</p> : null}
+
+          {!loading && !instance ? (
+            <p className="text-sm text-muted-foreground">
+              Nessuna istanza caricata. Apri `/control/&lt;istanza&gt;` oppure usa il link dalla configurazione.
+            </p>
+          ) : null}
+
+          {!loading && instance && requiresLogin ? (
+            <section className="max-w-md space-y-4">
+              <div className="space-y-1">
+                <h2 className="text-xl font-semibold tracking-tight">Login istanza</h2>
+                <p className="text-sm text-muted-foreground">Usa le credenziali configurate per questa istanza.</p>
+              </div>
+              <div className="space-y-4 rounded-2xl border border-border/80 bg-background p-5 shadow-none">
                 <div className="space-y-2">
                   <Label>Username</Label>
                   <Input value={loginUser} onChange={(event) => setLoginUser(event.target.value)} />
@@ -747,373 +1187,69 @@ export function ControlPage() {
                   />
                 </div>
                 <Button onClick={login}>Accedi</Button>
-              </CardContent>
-            </Card>
-          ) : null}
-        </div>
-
-        <div className="space-y-6">
-          {loading ? <p className="text-sm text-muted-foreground">Caricamento dashboard in corso...</p> : null}
-
-          {!loading && !instance ? (
-            <Card className="border-border/80 bg-background/90">
-              <CardContent className="p-6 text-sm text-muted-foreground">
-                Nessuna istanza caricata. Apri `/control/&lt;istanza&gt;` oppure usa il link dalla configurazione.
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {!loading && instance && requiresLogin ? (
-            <Card className="border-border/80 bg-background/90">
-              <CardContent className="p-6 text-sm text-muted-foreground">
-                Effettua il login per vedere le stanze e inviare comandi a questa istanza.
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           ) : null}
 
           {!loading && instance && !requiresLogin ? (
             <>
-              {!status?.rooms?.length ? (
-                <Card className="border-border/80 bg-background/90">
-                  <CardContent className="p-6 text-sm text-muted-foreground">Nessuna stanza configurata.</CardContent>
-                </Card>
+              {selectedRoomSlug && !selectedRoom ? (
+                <section className="space-y-3">
+                  <h2 className="text-xl font-semibold tracking-tight">Stanza non trovata</h2>
+                  <p className="text-sm text-muted-foreground">La stanza richiesta non è disponibile in questa istanza.</p>
+                  <Button asChild variant="outline" className="rounded-full">
+                    <Link to={controlUrl(instance.id)}>Torna a tutte le stanze</Link>
+                  </Button>
+                </section>
               ) : null}
 
-              {(status?.rooms ?? []).map((room) => (
-                <Card key={room.name} className="border-border/80 bg-background/90">
-                  <CardHeader>
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <CardTitle>{room.name}</CardTitle>
-                        <CardDescription>
-                          {roomHasEntities(room)
-                            ? `${room.lights.length} luci • ${room.dimmers.length} dimmer • ${room.shutters.length} tapparelle • ${room.thermostats.length} termostati`
-                            : "Nessuna entità"}
-                        </CardDescription>
+              {!selectedRoomSlug ? (
+                <>
+                  {favoriteTiles.length ? (
+                    <section className="space-y-4">
+                      <div className="space-y-1">
+                        <h2 className="text-xl font-semibold tracking-tight">Preferiti</h2>
+                        <p className="text-sm text-muted-foreground">Comandi evidenziati per accesso rapido.</p>
                       </div>
-                      <Badge variant="outline">
-                        {room.lights.length + room.dimmers.length + room.shutters.length + room.thermostats.length} elementi
-                      </Badge>
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        {favoriteTiles.map((item) => item.node)}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <section className="space-y-4">
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-semibold tracking-tight">Stanze</h2>
+                      <p className="text-sm text-muted-foreground">Apri una stanza per vedere solo i suoi comandi.</p>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    {roomHasEntities(room) ? (
-                      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-                        {sortRoomItems(room.thermostats).map((thermostat) => {
-                          const busyId = `thermostat-${thermostat.id}`
-                          const setpoint = Number.isFinite(Number(thermostat.setpoint)) ? Number(thermostat.setpoint) : 21
-                          const active = thermostat.isActive === true || (thermostat.isActive == null && thermostat.isOn === true)
-                          return (
-                            <Card key={thermostat.id} className="border-border/70 shadow-none">
-                              <CardContent className="space-y-4 p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="space-y-1">
-                                    <h3 className="font-semibold">{thermostat.name}</h3>
-                                    <p className="text-sm text-muted-foreground">
-                                      Temp: {formatTemperature(thermostat.temperature)} • {active ? "ACCESO" : "SPENTO"}
-                                    </p>
-                                  </div>
-                                  <Button variant="ghost" size="icon" onClick={() => openProfile("thermostat", thermostat.id)}>
-                                    <Settings2 className={`size-4 ${profiles.thermostat[thermostat.id]?.enabled ? "text-primary" : ""}`} />
-                                  </Button>
+                    {rooms.length ? (
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                        {rooms.map((room) => (
+                          <Link key={room.name} to={roomViewUrl(instance.id, room.name)} className="block">
+                            <Card className="h-full border-border/80 shadow-none transition-colors hover:border-foreground/20 hover:bg-muted/20">
+                              <CardContent className="space-y-2 p-5">
+                                <div className="flex items-center justify-between gap-3">
+                                  <h3 className="font-semibold">{room.name}</h3>
+                                  <span className="text-xs text-muted-foreground">{roomEntityCount(room)}</span>
                                 </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant={thermostat.mode === "winter" ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/thermostats/command`,
-                                        { thermostatId: thermostat.id, mode: "winter" },
-                                        "Comando termostato mode 'winter'"
-                                      )
-                                    }
-                                  >
-                                    INVERNO
-                                  </Button>
-                                  <Button
-                                    variant={thermostat.mode === "summer" ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/thermostats/command`,
-                                        { thermostatId: thermostat.id, mode: "summer" },
-                                        "Comando termostato mode 'summer'"
-                                      )
-                                    }
-                                  >
-                                    ESTATE
-                                  </Button>
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Setpoint</Label>
-                                  <Input
-                                    type="range"
-                                    min={5}
-                                    max={30}
-                                    step={0.5}
-                                    value={setpoint}
-                                    onChange={(event) => {
-                                      const nextValue = Number(event.target.value)
-                                      setStatus((current) => {
-                                        if (!current) return current
-                                        const next = cloneValue(current)
-                                        for (const roomItem of next.rooms) {
-                                          const found = roomItem.thermostats.find((item) => item.id === thermostat.id)
-                                          if (found) {
-                                            found.setpoint = nextValue
-                                          }
-                                        }
-                                        return next
-                                      })
-                                    }}
-                                  />
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium">{setpoint.toFixed(1)} C</span>
-                                    <Button
-                                      size="sm"
-                                      disabled={busyKeys.includes(busyId)}
-                                      onClick={() =>
-                                        void executeCommand(
-                                          busyId,
-                                          `/api/instances/${encodeURIComponent(instanceId)}/thermostats/command`,
-                                          { thermostatId: thermostat.id, setpoint },
-                                          "Comando termostato setpoint"
-                                        )
-                                      }
-                                    >
-                                      SET
-                                    </Button>
-                                  </div>
-                                </div>
+                                <p className="text-sm text-muted-foreground">{roomSummary(room)}</p>
                               </CardContent>
                             </Card>
-                          )
-                        })}
-
-                        {sortRoomItems(room.lights).map((light) => {
-                          const busyId = `light-${light.id}`
-                          const profileEnabled = profiles.light[light.id]?.enabled
-                          return (
-                            <Card key={light.id} className="border-border/70 shadow-none">
-                              <CardContent className="space-y-4 p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="space-y-1">
-                                    <h3 className="font-semibold">{light.name}</h3>
-                                    <p className="text-sm text-muted-foreground">{light.isOn ? "Accesa" : "Spenta"}</p>
-                                  </div>
-                                  <Button variant="ghost" size="icon" onClick={() => openProfile("light", light.id)}>
-                                    <Settings2 className={`size-4 ${profileEnabled ? "text-primary" : ""}`} />
-                                  </Button>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant={light.isOn === true ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/lights/command`,
-                                        { lightId: light.id, action: "on" },
-                                        "Comando luce 'on'"
-                                      )
-                                    }
-                                  >
-                                    ON
-                                  </Button>
-                                  <Button
-                                    variant={light.isOn === false ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/lights/command`,
-                                        { lightId: light.id, action: "off" },
-                                        "Comando luce 'off'"
-                                      )
-                                    }
-                                  >
-                                    OFF
-                                  </Button>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          )
-                        })}
-
-                        {sortRoomItems(room.dimmers).map((dimmer) => {
-                          const busyId = `dimmer-${dimmer.id}`
-                          const level = Number.isFinite(Number(dimmer.level)) ? Math.max(0, Math.min(9, Math.round(Number(dimmer.level)))) : 0
-                          return (
-                            <Card key={dimmer.id} className="border-border/70 shadow-none">
-                              <CardContent className="space-y-4 p-4">
-                                <div className="space-y-1">
-                                  <h3 className="font-semibold">{dimmer.name}</h3>
-                                  <p className="text-sm text-muted-foreground">
-                                    Livello {level} • {dimmer.isOn ? "Acceso" : "Spento"}
-                                  </p>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant={dimmer.isOn === true ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`,
-                                        { dimmerId: dimmer.id, action: "on" },
-                                        "Comando dimmer 'on'"
-                                      )
-                                    }
-                                  >
-                                    ON
-                                  </Button>
-                                  <Button
-                                    variant={dimmer.isOn === false ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`,
-                                        { dimmerId: dimmer.id, action: "off" },
-                                        "Comando dimmer 'off'"
-                                      )
-                                    }
-                                  >
-                                    OFF
-                                  </Button>
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Livello dimmer</Label>
-                                  <Input
-                                    type="range"
-                                    min={0}
-                                    max={9}
-                                    step={1}
-                                    value={level}
-                                    onChange={(event) => {
-                                      const nextValue = Number(event.target.value)
-                                      setStatus((current) => {
-                                        if (!current) return current
-                                        const next = cloneValue(current)
-                                        for (const roomItem of next.rooms) {
-                                          const found = roomItem.dimmers.find((item) => item.id === dimmer.id)
-                                          if (found) {
-                                            found.level = nextValue
-                                          }
-                                        }
-                                        return next
-                                      })
-                                    }}
-                                  />
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium">{level}</span>
-                                    <Button
-                                      size="sm"
-                                      disabled={busyKeys.includes(busyId)}
-                                      onClick={() =>
-                                        void executeCommand(
-                                          busyId,
-                                          `/api/instances/${encodeURIComponent(instanceId)}/dimmers/command`,
-                                          { dimmerId: dimmer.id, action: "set", level },
-                                          "Comando dimmer 'set'"
-                                        )
-                                      }
-                                    >
-                                      SET
-                                    </Button>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          )
-                        })}
-
-                        {sortRoomItems(room.shutters).map((shutter) => {
-                          const busyId = `shutter-${shutter.id}`
-                          const profileEnabled = profiles.shutter[shutter.id]?.enabled
-                          return (
-                            <Card key={shutter.id} className="border-border/70 shadow-none">
-                              <CardContent className="space-y-4 p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="space-y-1">
-                                    <h3 className="font-semibold">{shutter.name}</h3>
-                                    <p className="text-sm text-muted-foreground">Stato: {cleanText(shutter.action, "stop")}</p>
-                                  </div>
-                                  <Button variant="ghost" size="icon" onClick={() => openProfile("shutter", shutter.id)}>
-                                    <Settings2 className={`size-4 ${profileEnabled ? "text-primary" : ""}`} />
-                                  </Button>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant={shutter.action === "up" ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/shutters/command`,
-                                        { shutterId: shutter.id, action: "up" },
-                                        "Comando tapparella 'up'"
-                                      )
-                                    }
-                                  >
-                                    SU
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/shutters/command`,
-                                        { shutterId: shutter.id, action: "stop" },
-                                        "Comando tapparella 'stop'"
-                                      )
-                                    }
-                                  >
-                                    STOP
-                                  </Button>
-                                  <Button
-                                    variant={shutter.action === "down" ? "default" : "outline"}
-                                    size="sm"
-                                    disabled={busyKeys.includes(busyId)}
-                                    onClick={() =>
-                                      void executeCommand(
-                                        busyId,
-                                        `/api/instances/${encodeURIComponent(instanceId)}/shutters/command`,
-                                        { shutterId: shutter.id, action: "down" },
-                                        "Comando tapparella 'down'"
-                                      )
-                                    }
-                                  >
-                                    GIU
-                                  </Button>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          )
-                        })}
+                          </Link>
+                        ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">Nessuna entità in questa stanza.</p>
+                      <p className="text-sm text-muted-foreground">Nessuna stanza configurata.</p>
                     )}
-                  </CardContent>
-                </Card>
-              ))}
+                  </section>
+                </>
+              ) : null}
+
+              {selectedRoom ? renderRoomControls(selectedRoom) : null}
             </>
           ) : null}
-        </div>
-      </section>
+        </main>
+      </div>
 
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
         <DialogContent className="max-w-3xl">

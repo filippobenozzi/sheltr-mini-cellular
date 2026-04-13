@@ -1033,19 +1033,9 @@ export function ConfigPage() {
                 <SidebarMenu>
                   {configAuthRequired ? (
                     <SidebarMenuItem>
-                      <SidebarMenuButton type="button" tooltip="Logout config" onClick={configLogout}>
+                      <SidebarMenuButton type="button" tooltip="Logout" onClick={configLogout}>
                         <LogOut />
-                        <span className="group-data-[collapsible=icon]:hidden">Logout config</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ) : null}
-                  {editor ? (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild tooltip="Apri controllo">
-                        <Link to={controlUrl(editor.id)}>
-                          <ExternalLink />
-                          <span className="group-data-[collapsible=icon]:hidden">Apri controllo</span>
-                        </Link>
+                        <span className="group-data-[collapsible=icon]:hidden">Logout</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ) : null}
