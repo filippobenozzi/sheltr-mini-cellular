@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { ArrowLeft, LogOut, RefreshCw, Settings2, Star } from "lucide-react"
+import { ArrowLeft, Clock3, LogOut, RefreshCw, Star } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
 import {
@@ -684,7 +684,7 @@ export function ControlPage() {
             </div>
             <div className="flex items-center gap-1">
               <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("light", light.id)}>
-                <Settings2 className={cn("size-4", profileEnabled && "text-primary")} />
+                <Clock3 className={cn("size-4", profileEnabled && "text-sky-600")} />
               </Button>
               {renderFavoriteButton("light", light.id)}
             </div>
@@ -757,7 +757,7 @@ export function ControlPage() {
                 className="rounded-md"
                 onClick={() => showNote("Profili orari non disponibili per i dimmer.", false, "info")}
               >
-                <Settings2 className="size-4 text-muted-foreground" />
+                <Clock3 className="size-4 text-muted-foreground" />
               </Button>
               {renderFavoriteButton("dimmer", dimmer.id)}
             </div>
@@ -859,7 +859,7 @@ export function ControlPage() {
             </div>
             <div className="flex items-center gap-1">
               <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("shutter", shutter.id)}>
-                <Settings2 className={cn("size-4", profileEnabled && "text-primary")} />
+                <Clock3 className={cn("size-4", profileEnabled && "text-sky-600")} />
               </Button>
               {renderFavoriteButton("shutter", shutter.id)}
             </div>
@@ -926,6 +926,7 @@ export function ControlPage() {
     const busyId = `thermostat-${thermostat.id}`
     const setpoint = Number.isFinite(Number(thermostat.setpoint)) ? Number(thermostat.setpoint) : 21
     const sliderValue = [setpoint]
+    const profileEnabled = profiles.thermostat[thermostat.id]?.enabled
 
     return (
       <Card key={`thermostat-${roomName}-${thermostat.id}`} className="border-border/70 shadow-none">
@@ -940,7 +941,7 @@ export function ControlPage() {
             </div>
             <div className="flex items-center gap-1">
               <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("thermostat", thermostat.id)}>
-                <Settings2 className={cn("size-4", profiles.thermostat[thermostat.id]?.enabled && "text-primary")} />
+                <Clock3 className={cn("size-4", profileEnabled && "text-sky-600")} />
               </Button>
               {renderFavoriteButton("thermostat", thermostat.id)}
             </div>
